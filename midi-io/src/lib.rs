@@ -19,6 +19,18 @@ impl From<midir::InitError> for InitError {
     }
 }
 
+/// 判断端口名是否属于真实 MIDI 设备,过滤掉 ALSA 内核系统端口与环回端口。
+///
+/// 这些端口(如 `System:Timer`、`System:Announce`、`Midi Through`)并非真实
+/// MIDI 硬件,连接它们会持续收到定时器 tick / 客户端通告等非音乐事件,
+/// 导致主线程被淹没、ALSA 输入缓冲区溢出而卡死。
+fn is_real_device(name: &str) -> bool {
+    // midir 在 Linux 上给出的端口名形如 "System:Timer 0:0"、"Midi Through:... 14:0"
+    // 冒号前为 ALSA SEQ 客户端名,内核系统客户端与环回客户端应被排除。
+    let client = name.split(':').next().unwrap_or(name).trim();
+    !matches!(client, "System" | "Midi Through")
+}
+
 pub struct MidiOutputManager {
     output: midir::MidiOutput,
 }
@@ -35,6 +47,7 @@ impl MidiOutputManager {
             .ports()
             .iter()
             .filter_map(|p| self.output.port_name(p).ok())
+            .filter(|name| is_real_device(name))
             .map(MidiOutputPort)
             .collect()
     }
@@ -71,6 +84,7 @@ impl MidiInputManager {
             .ports()
             .iter()
             .filter_map(|p| self.input.port_name(p).ok())
+            .filter(|name| is_real_device(name))
             .map(MidiInputPort)
             .collect()
     }

@@ -1,5 +1,5 @@
 use crate::{MidiTrack, program_track::ProgramTrack, tempo_track::TempoTrack};
-use midly::{Format, Smf, Timing};
+use midly::{Format, MetaMessage, Smf, Timing, TrackEventKind};
 use std::{fs, path::Path, sync::Arc};
 
 #[derive(Debug, Clone)]
@@ -10,6 +10,11 @@ pub struct MidiFile {
     pub program_track: ProgramTrack,
     pub tempo_track: TempoTrack,
     pub measures: Arc<[std::time::Duration]>,
+    /// (numerator, real denominator) parsed from the first `TimeSignature` meta event.
+    pub time_signature: (u8, u8),
+    /// Number of sharps in the key signature (negative = flats), from the first `KeySignature`
+    /// meta event. Used by the staff renderer to draw the key signature and accidentals.
+    pub key_signature: i8,
 }
 
 impl MidiFile {
@@ -51,6 +56,28 @@ impl MidiFile {
         }
 
         let tempo_track = TempoTrack::build(&smf.tracks, u_per_quarter_note);
+
+        // Parse the first TimeSignature / KeySignature meta events across all tracks.
+        // TimeSignature stores the denominator as a power-of-two exponent (raw byte),
+        // so the real denominator is `1 << raw`. KeySignature stores sharps as i8
+        // (negative means flats).
+        let mut time_signature = (4u8, 4u8);
+        let mut key_signature = 0i8;
+        for track in &smf.tracks {
+            for ev in track.iter() {
+                if let TrackEventKind::Meta(meta) = &ev.kind {
+                    match meta {
+                        MetaMessage::TimeSignature(num, den_raw, _, _) => {
+                            time_signature = (*num, 1u8 << (*den_raw).min(7) as u32);
+                        }
+                        MetaMessage::KeySignature(sharps, _minor) => {
+                            key_signature = *sharps;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
 
         let mut track_color_id = 0;
         let tracks: Vec<MidiTrack> = smf
@@ -100,6 +127,8 @@ impl MidiFile {
             program_track,
             tempo_track,
             measures: measures.into(),
+            time_signature,
+            key_signature,
         })
     }
 }

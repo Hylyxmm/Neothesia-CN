@@ -118,6 +118,10 @@ impl<'a> SettingsRow<'a> {
         nuon::translate().x(row_padding).build(ui, |ui| {
             let title_h = 14.6;
             let subtitle_h = 12.2;
+            // CJK 字形在给定字号下的实际占位（含上下留白）大于拉丁字符，
+            // 若渲染框高度等于字号，中文底部会被裁切，故额外放宽框高。
+            let title_box_h = title_h + 4.0;
+            let subtitle_box_h = subtitle_h + 6.0;
 
             if self.subtitle.is_empty() {
                 nuon::label()
@@ -128,7 +132,7 @@ impl<'a> SettingsRow<'a> {
                     .build(ui);
             } else {
                 let gap = 5.0;
-                let sum_h = title_h + subtitle_h + gap;
+                let sum_h = title_box_h + subtitle_box_h + gap;
                 let y = super::center_y(row_h, sum_h);
 
                 nuon::label()
@@ -136,15 +140,15 @@ impl<'a> SettingsRow<'a> {
                     .text(self.title)
                     .text_justify(nuon::TextJustify::Left)
                     .font_size(title_h)
-                    .size(row_inner_w, title_h)
+                    .size(row_inner_w, title_box_h)
                     .build(ui);
                 nuon::label()
-                    .y(y + gap + title_h)
+                    .y(y + gap + title_box_h)
                     .text(self.subtitle)
                     .color([1.0, 1.0, 1.0, 0.5])
                     .text_justify(nuon::TextJustify::Left)
                     .font_size(subtitle_h)
-                    .size(row_inner_w, subtitle_h)
+                    .size(row_inner_w, subtitle_box_h)
                     .build(ui);
             }
 
