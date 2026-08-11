@@ -178,7 +178,7 @@ fn track_card(
     };
 
     let title = if track.has_drums && !track.has_other_than_drums {
-        "Percussion"
+        "打击乐"
     } else {
         let instrument_id = track
             .programs
@@ -188,7 +188,7 @@ fn track_card(
         midi_file::INSTRUMENT_NAMES[instrument_id]
     };
 
-    let subtitle = format!("{} Notes", track.notes.len());
+    let subtitle = format!("{} 个音符", track.notes.len());
 
     nuon::quad()
         .size(card_w, card_h)
@@ -276,7 +276,7 @@ fn track_card(
                 .hover_color(hover_color(PlayerConfig::Mute))
                 .preseed_color(color(PlayerConfig::Mute))
                 .border_radius([255.0, 0.0, 0.0, 255.0])
-                .label("Mute")
+                .label("静音")
                 .build(ui)
             {
                 res = TrackCardEvent::PlayerConfig(PlayerConfig::Mute);
@@ -293,7 +293,7 @@ fn track_card(
                 .hover_color(hover_color(PlayerConfig::Auto))
                 .preseed_color(color(PlayerConfig::Auto))
                 .border_radius([0.0; 4])
-                .label("Auto")
+                .label("自动")
                 .build(ui)
             {
                 res = TrackCardEvent::PlayerConfig(PlayerConfig::Auto);
@@ -310,7 +310,7 @@ fn track_card(
                 .hover_color(hover_color(PlayerConfig::Human))
                 .preseed_color(color(PlayerConfig::Human))
                 .border_radius([0.0, 255.0, 255.0, 0.0])
-                .label("Human")
+                .label("人工")
                 .build(ui)
             {
                 res = TrackCardEvent::PlayerConfig(PlayerConfig::Human);

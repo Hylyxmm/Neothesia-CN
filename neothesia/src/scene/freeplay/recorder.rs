@@ -27,9 +27,9 @@ const TICKS_PER_SECOND: f64 = TICKS_PER_BEAT as f64 * 1_000_000.0 / TEMPO_MICROS
 
 #[derive(Debug, Eq, PartialEq, thiserror::Error)]
 pub enum RecorderError {
-    #[error("No note events recorded")]
+    #[error("未录制到音符事件")]
     NoNotesFound,
-    #[error("Failed to write MIDI file")]
+    #[error("写入 MIDI 文件失败")]
     Write,
     #[error("{0}")]
     MidiFileParse(String),
@@ -49,13 +49,13 @@ impl fmt::Display for RecorderStatus {
         match self {
             Self::Idle => {}
             Self::RecordingFinished(duration) => {
-                write!(f, "Recorded {:.1}s", duration.as_secs_f32())?;
+                write!(f, "已录制 {:.1}s", duration.as_secs_f32())?;
             }
             Self::Error(err) => {
                 write!(f, "{err}")?;
             }
             Self::Saved(path) => {
-                write!(f, "Saved recording to {}", path.display())?;
+                write!(f, "录制已保存至 {}", path.display())?;
             }
         }
 
@@ -292,7 +292,7 @@ pub fn update_preview_ui(scene: &mut FreeplayScene, ctx: &mut Context) {
         .unwrap_or(true);
 
     let status_label = if scene.recorder.is_recording() {
-        format!("Recording {:.1}s", scene.recorder.duration().as_secs_f32())
+        format!("录制中 {:.1}s", scene.recorder.duration().as_secs_f32())
     } else {
         scene.recorder_status.to_string()
     };

@@ -1161,7 +1161,7 @@ impl Button {
                 bold: false,
                 text: self.label.to_string(),
                 color: self.font_color,
-                font_family: Cow::Borrowed("Roboto"),
+                font_family: Cow::Borrowed("Noto Sans CJK SC"),
             });
         }
 
@@ -1203,7 +1203,7 @@ impl Label {
             text: String::new(),
             icon: String::new(),
             bold: false,
-            font_family: Cow::Borrowed("Roboto"),
+            font_family: Cow::Borrowed("Noto Sans CJK SC"),
         }
     }
 

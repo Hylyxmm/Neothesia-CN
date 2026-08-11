@@ -60,25 +60,25 @@ impl super::MenuScene {
                     .add_to_current(ui);
                 nuon::translate().y(margin_top).add_to_current(ui);
 
-                nuon::settings_section("Output")
+                nuon::settings_section("音频输出")
                     .width(body_w)
                     .build(ui, |ui, rows, spacer| {
                         self.settings_output_section(ctx, ui, rows, spacer);
                     });
 
-                nuon::settings_section("Input")
+                nuon::settings_section("MIDI 输入")
                     .width(body_w)
                     .build(ui, |ui, rows, spacer| {
                         self.settings_input_section(ctx, ui, rows, spacer);
                     });
 
-                nuon::settings_section("Note Range")
+                nuon::settings_section("音符范围")
                     .width(body_w)
                     .build(ui, |ui, rows, spacer| {
                         self::update_range_start(
                             ctx,
                             nuon::settings_row_spin()
-                                .title("Start")
+                                .title("起始")
                                 .subtitle(ctx.config.piano_range().start().to_string())
                                 .id("range-start")
                                 .build(ui, rows),
@@ -89,11 +89,34 @@ impl super::MenuScene {
                         self::update_range_end(
                             ctx,
                             nuon::settings_row_spin()
-                                .title("End")
+                                .title("结束")
                                 .subtitle(ctx.config.piano_range().end().to_string())
                                 .id("range-end")
                                 .build(ui, rows),
                         );
+
+                        spacer(ui);
+
+                        // 重置为标准 88 键音域
+                        nuon::settings_row()
+                            .title("默认音域")
+                            .subtitle("重置为标准 88 键 (A0–C8)")
+                            .body(|ui, row_w, row_h| {
+                                let w = 93.0;
+                                let h = 31.0;
+                                if button()
+                                    .x(row_w - w)
+                                    .y(nuon::center_y(row_h, h))
+                                    .size(w, h)
+                                    .label("重置")
+                                    .build(ui)
+                                {
+                                    // 标准 88 键音域：A0(21) – C8(108)
+                                    ctx.config.set_piano_range_start(21);
+                                    ctx.config.set_piano_range_end(108);
+                                }
+                            })
+                            .build(ui, rows);
                     });
 
                 nuon::translate().y(10.0).add_to_current(ui);
@@ -102,12 +125,12 @@ impl super::MenuScene {
                 self.keyboard_layout_preview(ctx, body_w, keyboard_h, ui);
                 nuon::translate().y(keyboard_h).add_to_current(ui);
 
-                nuon::settings_section("Render")
+                nuon::settings_section("渲染")
                     .width(body_w)
                     .build(ui, |ui, rows, spacer| {
                         if nuon::settings_row_toggler()
-                            .title("Vertical Guidelines")
-                            .subtitle("Display octave indicators")
+                            .title("垂直辅助线")
+                            .subtitle("显示八度标记")
                             .value(ctx.config.vertical_guidelines())
                             .build(ui, rows)
                         {
@@ -118,8 +141,8 @@ impl super::MenuScene {
                         spacer(ui);
 
                         if nuon::settings_row_toggler()
-                            .title("Horizontal Guidelines")
-                            .subtitle("Display measure/bar indicators")
+                            .title("水平辅助线")
+                            .subtitle("显示小节线")
                             .value(ctx.config.horizontal_guidelines())
                             .build(ui, rows)
                         {
@@ -130,8 +153,8 @@ impl super::MenuScene {
                         spacer(ui);
 
                         if nuon::settings_row_toggler()
-                            .title("Glow")
-                            .subtitle("Key glow effect")
+                            .title("发光")
+                            .subtitle("琴键发光效果")
                             .value(ctx.config.glow())
                             .build(ui, rows)
                         {
@@ -141,8 +164,8 @@ impl super::MenuScene {
                         spacer(ui);
 
                         if nuon::settings_row_toggler()
-                            .title("Note Labels")
-                            .subtitle("Display waterfall note labels")
+                            .title("音符标签")
+                            .subtitle("显示瀑布音符标签")
                             .value(ctx.config.note_labels())
                             .build(ui, rows)
                         {
@@ -220,7 +243,7 @@ impl super::MenuScene {
         spacer: &dyn Fn(&mut nuon::Ui),
     ) {
         nuon::settings_row()
-            .title("Output")
+            .title("音频输出")
             .body(|ui, row_w, row_h| self.settings_output_picker(ui, ctx, row_w, row_h))
             .build(ui, rows);
 
@@ -235,7 +258,7 @@ impl super::MenuScene {
             spacer(ui);
 
             nuon::settings_row()
-                .title("SoundFont")
+                .title("音色库")
                 .subtitle(
                     ctx.config
                         .soundfont_path()
@@ -251,7 +274,7 @@ impl super::MenuScene {
                         .x(row_w - w)
                         .y(nuon::center_y(row_h, h))
                         .size(w, h)
-                        .label("Select File")
+                        .label("选择文件")
                         .build(ui)
                     {
                         self.futures
@@ -265,7 +288,7 @@ impl super::MenuScene {
             self::update_audio_gain(
                 ctx,
                 nuon::settings_row_spin()
-                    .title("Audio Gain")
+                    .title("音频增益")
                     .subtitle(ctx.config.audio_gain().to_string())
                     .id("gain")
                     .build(ui, rows),
@@ -274,8 +297,8 @@ impl super::MenuScene {
             spacer(ui);
 
             if nuon::settings_row_toggler()
-                .title("Separate Channels")
-                .subtitle("Assign different MIDI channel to each track")
+                .title("分离通道")
+                .subtitle("为每个音轨分配不同 MIDI 通道")
                 .value(ctx.config.separate_channels())
                 .build(ui, rows)
             {
@@ -352,7 +375,7 @@ impl super::MenuScene {
         _spacer: &dyn Fn(&mut nuon::Ui),
     ) {
         nuon::settings_row()
-            .title("Input")
+            .title("MIDI 输入")
             .body(|ui, row_w, row_h| self.settings_input_picker(ui, ctx, row_w, row_h))
             .build(ui, rows);
     }

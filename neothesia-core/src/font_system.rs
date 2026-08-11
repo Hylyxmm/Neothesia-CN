@@ -20,10 +20,17 @@ pub fn font_system() -> Rc<RefCell<FontSystem>> {
                         "../../assets/fonts/Iced-Icons.ttf"
                     ))),
                     glyphon::fontdb::Source::Binary(Arc::new(include_bytes!(
+                        "../../assets/fonts/NotoSansCJK-Regular.ttc"
+                    ))),
+                    glyphon::fontdb::Source::Binary(Arc::new(include_bytes!(
                         "../../assets/fonts/Roboto-Regular.ttf"
                     ))),
                     glyphon::fontdb::Source::Binary(Arc::new(include_bytes!(
                         "../../assets/fonts/bootstrap-icons.ttf"
+                    ))),
+                    // SMuFL music font (clefs, noteheads, accidentals, ...)
+                    glyphon::fontdb::Source::Binary(Arc::new(include_bytes!(
+                        "../../assets/fonts/Bravura.otf"
                     ))),
                 ])))
             })

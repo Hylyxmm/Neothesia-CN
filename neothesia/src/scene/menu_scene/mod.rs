@@ -143,7 +143,7 @@ impl MenuScene {
             nuon::label()
                 .size(width, height)
                 .font_size(30.0)
-                .text("Loading...")
+                .text("加载中…")
                 .text_justify(nuon::TextJustify::Center)
                 .build(&mut self.nuon);
             return;
@@ -179,21 +179,21 @@ impl MenuScene {
             .y(nuon::center_y(win_h, full_h))
             .build(ui, |ui| {
                 nuon::label()
-                    .text("Do you want to exit?")
+                    .text("是否要退出?")
                     .font_size(30.0)
                     .size(full_w, text_h)
                     .build(ui);
 
                 nuon::translate().y(text_h).add_to_current(ui);
 
-                if neo_btn().size(btn_w, btn_h).label("No").build(ui) {
+                if neo_btn().size(btn_w, btn_h).label("否").build(ui) {
                     self.state.go_back();
                 }
 
                 nuon::translate().x(btn_w).add_to_current(ui);
                 nuon::translate().x(btn_gap).add_to_current(ui);
 
-                if neo_btn().size(btn_w, btn_h).label("Yes").build(ui) {
+                if neo_btn().size(btn_w, btn_h).label("是").build(ui) {
                     ctx.proxy.send_event(NeothesiaEvent::Exit).ok();
                 }
             });
@@ -224,19 +224,19 @@ impl MenuScene {
                     .x(-w / 2.0)
                     .y(logo_h + post_logo_gap)
                     .build(ui, |ui| {
-                        if neo_btn().size(w, h).label("Select File").build(ui) {
+                        if neo_btn().size(w, h).label("选择文件").build(ui) {
                             self.futures.push(open_midi_file_picker(&mut self.state));
                         }
 
                         nuon::translate().y(h + gap).add_to_current(ui);
 
-                        if neo_btn().size(w, h).label("Settings").build(ui) {
+                        if neo_btn().size(w, h).label("设置").build(ui) {
                             self.state.go_to(Page::Settings);
                         }
 
                         nuon::translate().y(h + gap).add_to_current(ui);
 
-                        if neo_btn().size(w, h).label("Exit").build(ui) {
+                        if neo_btn().size(w, h).label("退出").build(ui) {
                             self.state.go_back();
                         }
                     });
@@ -265,7 +265,7 @@ impl MenuScene {
                     .size(btn_w, btn_h)
                     .icon(icons::balloon_icon())
                     .color([100; 3])
-                    .tooltip("FreePlay")
+                    .tooltip("自由弹奏")
                     .build(ui)
                 {
                     state::freeplay(&self.state, ctx);
@@ -282,7 +282,7 @@ impl MenuScene {
                 if neo_btn()
                     .size(btn_w, btn_h)
                     .icon(icons::play_icon())
-                    .tooltip("Play")
+                    .tooltip("播放")
                     .build(ui)
                 {
                     state::play(&self.state, ctx);
@@ -293,7 +293,7 @@ impl MenuScene {
                 if neo_btn()
                     .size(btn_w, btn_h)
                     .icon(icons::note_list_icon())
-                    .tooltip("Tracks")
+                    .tooltip("音轨")
                     .build(ui)
                 {
                     self.state.go_to(Page::TrackSelection);

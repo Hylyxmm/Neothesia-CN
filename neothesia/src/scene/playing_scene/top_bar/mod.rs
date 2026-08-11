@@ -239,17 +239,28 @@ impl TopBar {
                     .build(ui);
 
                 nuon::translate().x(15.0).build(ui, |ui| {
-                    nuon::settings_section("Display").width(width - 30.0).build(
+                    nuon::settings_section("显示").width(width - 30.0).build(
                         ui,
-                        |ui, rows, _| {
+                        |ui, rows, spacer| {
                             if nuon::settings_row_toggler()
-                                .title("Chord Identifier")
-                                .subtitle("Display chord above keyboard")
+                                .title("和弦识别")
+                                .subtitle("在键盘上方显示和弦")
                                 .value(ctx.config.chord_identifier())
                                 .build(ui, rows)
                             {
                                 ctx.config
                                     .set_chord_identifier(!ctx.config.chord_identifier());
+                            }
+
+                            spacer(ui);
+
+                            if nuon::settings_row_toggler()
+                                .title("五线谱预览")
+                                .subtitle("在进度条下方显示滚动五线谱")
+                                .value(ctx.config.staff_view())
+                                .build(ui, rows)
+                            {
+                                ctx.config.set_staff_view(!ctx.config.staff_view());
                             }
                         },
                     );

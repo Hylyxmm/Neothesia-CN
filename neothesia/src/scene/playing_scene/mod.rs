@@ -1,6 +1,6 @@
 use midi_file::midly::MidiMessage;
 use neothesia_core::render::{
-    GlowRenderer, GuidelineRenderer, NoteLabels, QuadRenderer, TextRenderer,
+    GlowRenderer, GuidelineRenderer, NoteLabels, QuadRenderer, StaffRenderer, TextRenderer,
 };
 use std::time::Duration;
 use winit::{
@@ -46,6 +46,8 @@ pub struct PlayingScene {
     quad_renderer_fg: QuadRenderer,
     glow: Option<GlowRenderer>,
     toast_manager: ToastManager,
+    staff: StaffRenderer,
+    staff_view: bool,
 
     nuon: nuon::Ui,
     mouse_to_midi_state: MouseToMidiEventState,
@@ -111,6 +113,15 @@ impl PlayingScene {
             keyboard.layout(),
         ));
 
+        let staff = StaffRenderer::new(
+            waterfall.notes().clone(),
+            player.song().file.measures.clone(),
+            player.song().file.time_signature,
+            player.song().file.key_signature,
+            ctx.quad_renderer_factory.new_renderer(),
+            ctx.text_renderer_factory.new_renderer(),
+        );
+
         Self {
             keyboard,
             guidelines,
@@ -125,6 +136,8 @@ impl PlayingScene {
             quad_renderer_fg,
             glow,
             toast_manager: ToastManager::default(),
+            staff,
+            staff_view: ctx.config.staff_view(),
 
             nuon: nuon::Ui::new(),
             mouse_to_midi_state: MouseToMidiEventState::default(),
@@ -207,6 +220,7 @@ impl PlayingScene {
 
         self.waterfall
             .resize(&ctx.config, self.keyboard.layout().clone());
+        self.staff.resize(ctx.window_state.logical_size.width);
     }
 }
 
@@ -215,12 +229,21 @@ impl Scene for PlayingScene {
     fn update(&mut self, ctx: &mut Context, delta: Duration) {
         self.quad_renderer_bg.clear();
         self.quad_renderer_fg.clear();
+        self.staff_view = ctx.config.staff_view();
 
         self.rewind_controller.update(&mut self.player, ctx, delta);
         self.toast_manager.update(&mut self.text_renderer);
 
         let time = self.update_midi_player(ctx, delta);
         self.waterfall.update(time);
+        if self.staff_view {
+            self.staff.resize(ctx.window_state.logical_size.width);
+            self.staff.update(
+                time,
+                ctx.window_state.physical_size,
+                ctx.window_state.scale_factor as f32,
+            );
+        }
         self.guidelines.update(
             &mut self.quad_renderer_bg,
             ctx.config.animation_speed(),
@@ -259,6 +282,9 @@ impl Scene for PlayingScene {
 
         self.quad_renderer_bg.prepare();
         self.quad_renderer_fg.prepare();
+        if self.staff_view {
+            self.staff.prepare();
+        }
 
         if let Some(glow) = &mut self.glow {
             glow.prepare();
@@ -287,6 +313,9 @@ impl Scene for PlayingScene {
     fn render<'pass>(&'pass mut self, rpass: &mut wgpu_jumpstart::RenderPass<'pass>) {
         self.quad_renderer_bg.render(rpass);
         self.waterfall.render(rpass);
+        if self.staff_view {
+            self.staff.render(rpass);
+        }
         if let Some(note_labels) = self.note_labels.as_mut() {
             note_labels.render(rpass);
         }

@@ -177,6 +177,10 @@ pub struct AppearanceConfigV1 {
 
     #[serde(default)]
     pub chord_identifier: bool,
+
+    /// Show the scrolling grand-staff preview between the progress bar and the waterfall.
+    #[serde(default = "default_staff_view")]
+    pub staff_view: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -193,6 +197,7 @@ impl Default for AppearanceConfig {
             horizontal_guidelines: default_horizontal_guidelines(),
             glow: default_glow(),
             chord_identifier: false,
+            staff_view: default_staff_view(),
         })
     }
 }
@@ -249,6 +254,10 @@ fn default_horizontal_guidelines() -> bool {
 }
 
 fn default_glow() -> bool {
+    true
+}
+
+fn default_staff_view() -> bool {
     true
 }
 

@@ -164,6 +164,14 @@ impl Config {
         self.appearance.chord_identifier = chord_identifier;
     }
 
+    pub fn staff_view(&self) -> bool {
+        self.appearance.staff_view
+    }
+
+    pub fn set_staff_view(&mut self, staff_view: bool) {
+        self.appearance.staff_view = staff_view;
+    }
+
     pub fn last_opened_song(&self) -> Option<&PathBuf> {
         self.history.last_opened_song.as_ref()
     }
