@@ -176,7 +176,7 @@ mod tests {
     #[test]
     fn flag_ink_boxes() {
         let mut cache = GlyphCache::new();
-        let size = 4.0 * 11.2; // matches FONT_SIZE in mod.rs
+        let size = 4.0 * 10.0; // matches FONT_SIZE in mod.rs
         let cases = [
             ('\u{E240}', "flag8thUp  "),
             ('\u{E241}', "flag8thDown"),

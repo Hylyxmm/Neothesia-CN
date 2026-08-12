@@ -23,7 +23,20 @@ use midi_file::MidiNote;
 
 // ---- layout constants (logical px) -----------------------------------------
 const STAFF_TOP_Y: f32 = 78.0;
-const LINE_SPACING: f32 = 11.2; // distance between two adjacent staff lines
+const LINE_SPACING: f32 = 10.0; // distance between two adjacent staff lines
+/// Noteheads are centred on their onset x, so a downbeat (onset exactly at the measure boundary)
+/// would straddle its bar line — half the head lands in the previous measure. We don't move the
+/// notes (that would break spacing/duration), so instead nudge each drawn bar line left by this
+/// many notehead widths so the downbeat head sits to the right of the line. (The Bravura notehead
+/// is a bit wider than one staff space, so this needs to be ≥~0.8 to open a visible gap.)
+const BARLINE_NUDGE: f32 = 1.0 * LINE_SPACING;
+/// Grace-note (倚音) rendering: a very short note (≤ 32nd) crushed just before a longer main note
+/// is drawn smaller, just left of the main notehead, instead of at its literal (overlapping) time
+/// position. GRACE_SCALE sizes the head/stem; GRACE_OFFSET is the centre-to-centre gap from the
+/// main notehead.
+const GRACE_SCALE: f32 = 0.6;
+const GRACE_STEM_LEN: f32 = 2.0 * LINE_SPACING;
+const GRACE_OFFSET: f32 = 1.5 * LINE_SPACING;
 const TREBLE_TOP_OFFSET: f32 = 14.0;
 // 2 line-spacings so middle C (C4) is a single shared ledger line between the two staves.
 const INTER_STAFF_GAP: f32 = 2.0 * LINE_SPACING;
@@ -31,8 +44,12 @@ const CLEF_BLOCK_W: f32 = 80.0;
 /// Fixed vertical extent of the staff band (top at `STAFF_TOP_Y`). Decoupled from
 /// `LINE_SPACING` so shrinking the line spacing keeps the region (and its scissor) the same
 /// size — the smaller staff is centred within it instead of being clipped top/bottom.
-/// Value = the old `14 + 10*LINE_SPACING + 12` evaluated at LINE_SPACING = 14.
-const BAND_H: f32 = 166.0;
+///
+/// The band is also the scissor rect, so notes whose ledger lines reach above the treble staff
+/// (上加线) or below the bass staff (下加线) are hard-clipped at the band edge. The staff system
+/// is centred vertically in the band, so widening the band adds ledger room equally above and
+/// below. Widened 20% (166 → ~199) so 2–3 ledger-line notes fit instead of being cut off.
+const BAND_H: f32 = 199.0;
 /// Sharps/flats render a bit smaller than other glyphs.
 const ACCIDENTAL_SCALE: f32 = 0.8;
 /// Flags render smaller so they don't visually dominate at this font size.
@@ -80,6 +97,27 @@ struct GlyphTask {
     y: f32,
     color: Color,
     scale: f32,
+}
+
+/// Resolved geometry of one notehead within a voice (single staff): its screen y, diatonic step,
+/// notehead glyph, and flag count (0 = quarter-or-longer, 1 = eighth, 2 = sixteenth, ...).
+struct VN {
+    y: f32,
+    step: i32,
+    head: char,
+    has_stem: bool,
+    flags: u8,
+    midi: u8,
+}
+
+/// One "column" in a voice stream: every note sharing a single start time on one staff (a chord),
+/// together with its draw position and play-state color. Consecutive columns are the units that
+/// beaming groups together.
+struct VoiceColumn<'a> {
+    t: f32,
+    notes: Vec<&'a MidiNote>,
+    x: f32,
+    color: Color,
 }
 
 pub struct StaffRenderer {
@@ -426,8 +464,9 @@ impl StaffRenderer {
             if !(CLEF_BLOCK_W..=win_w).contains(&x) {
                 continue;
             }
+            // nudge the drawn line left so the downbeat notehead sits in its own measure
             out.push(Cmd::Quad(quad(
-                x,
+                x - BARLINE_NUDGE,
                 self.treble_top,
                 1.0,
                 self.bass_bottom - self.treble_top,
@@ -454,31 +493,20 @@ impl StaffRenderer {
         // fixed clef/key/time block glyphs
         self.draw_clef_block(&mut out);
 
-        // notes (sorted by start == sorted by x); bound to the visible time window. Notes that
-        // share a start time are a chord and are drawn with one shared stem per staff.
+        // notes (sorted by start == sorted by x); bound to the visible time window. Drum channel
+        // (10) isn't rendered. Each note is routed to a staff (voice); consecutive notes on a staff
+        // that share a beat and a duration value are then beamed together (共享符尾).
         let start_idx = self
             .notes
             .inner
             .partition_point(|n| n.start.as_secs_f32() < lo_t);
-        let mut notes = self.notes.inner.iter().skip(start_idx).peekable();
-        while let Some(note) = notes.next() {
-            let t = note.start.as_secs_f32();
+        let mut visible: Vec<(&MidiNote, f32, Color)> = Vec::new();
+        for n in self.notes.inner.iter().skip(start_idx) {
+            let t = n.start.as_secs_f32();
             if t > hi_t {
                 break;
             }
-            // gather every note at this same start time (the rest of the chord); they are
-            // consecutive because the slice is sorted by start.
-            let mut group: Vec<&MidiNote> = vec![note];
-            while let Some(next) = notes.peek() {
-                if next.start.as_secs_f32() == t {
-                    group.push(notes.next().unwrap());
-                } else {
-                    break;
-                }
-            }
-            // drum channel (10) isn't rendered on the staff
-            let group: Vec<&MidiNote> = group.into_iter().filter(|n| n.channel != 9).collect();
-            if group.is_empty() {
+            if n.channel == 9 {
                 continue;
             }
             let x = playhead_x + (t - time) * speed;
@@ -486,7 +514,34 @@ impl StaffRenderer {
                 continue;
             }
             let color = if t <= time { COL_GRAY } else { COL_WHITE };
-            self.draw_chord(&group, x, color, &mut out);
+            visible.push((n, x, color));
+        }
+
+        // Draw each voice (staff) as its own stream so beaming can connect notes across time.
+        for treble in [true, false] {
+            let mut columns: Vec<VoiceColumn> = Vec::new();
+            for &(n, x, color) in &visible {
+                if self.note_is_treble(n) != treble {
+                    continue;
+                }
+                let t = n.start.as_secs_f32();
+                // consecutive same-start notes form one column (a chord on this staff)
+                if let Some(last) = columns.last_mut() {
+                    if last.t == t {
+                        last.notes.push(n);
+                        continue;
+                    }
+                }
+                columns.push(VoiceColumn {
+                    t,
+                    notes: vec![n],
+                    x,
+                    color,
+                });
+            }
+            if !columns.is_empty() {
+                self.draw_voice_stream(&columns, treble, &mut out);
+            }
         }
 
         out
@@ -556,40 +611,148 @@ impl StaffRenderer {
         }
     }
 
-    /// Draw a chord: every note sharing one start time. The chord may span both staves (two
-    /// hands), so each staff is drawn as a separate voice with its own single shared stem.
-    ///
-    /// Voice assignment follows the MIDI track (hand), not the absolute pitch: when the file has
-    /// two melody tracks the right-hand track is always the high voice (stem up) and the
-    /// left-hand track the low voice (stem down), even where a hand crosses middle C. With a
-    /// single track there is no hand information, so notes split by pitch as a fallback.
-    fn draw_chord(&self, group: &[&MidiNote], x: f32, color: Color, out: &mut Vec<Cmd>) {
-        let voiced = !self.track_is_treble.is_empty();
-        for treble in [true, false] {
-            let voice: Vec<&MidiNote> = group
-                .iter()
+    /// Which staff (voice) a note belongs to. With two or more melody tracks the right-hand track
+    /// is always the high voice (treble, stem up) and the left-hand track the low voice (bass, stem
+    /// down), even where a hand crosses middle C. With a single track there is no hand information,
+    /// so the note splits by pitch at middle C as a fallback.
+    fn note_is_treble(&self, n: &MidiNote) -> bool {
+        if !self.track_is_treble.is_empty() {
+            self.track_is_treble
+                .get(&n.track_id)
                 .copied()
-                .filter(|n| {
-                    if voiced {
-                        // Stem follows the hand/voice (track), not the pitch.
-                        self.track_is_treble.get(&n.track_id).copied().unwrap_or(false) == treble
-                    } else {
-                        // No track voice info: fall back to a per-note pitch split at middle C.
-                        pitch::is_treble(n.note) == treble
-                    }
-                })
-                .collect();
-            if voice.is_empty() {
-                continue;
-            }
-            self.draw_voice(&voice, x, treble, color, out);
+                .unwrap_or(false)
+        } else {
+            pitch::is_treble(n.note)
         }
     }
 
-    /// Draw one voice (notes on one staff, same start time): noteheads / accidentals / ledger
-    /// lines per note, plus a single shared stem + flag. The stem is measured from the outermost
-    /// head — highest pitch for treble (stem up), lowest pitch for bass (stem down) — and extends
-    /// `stem_len` past it, so the flag sits at the true stem end, not near the heads.
+    /// Decide whether a beam group starts at column `i`, and if so return `(last_index, flags)`
+    /// — the last column included (inclusive) and the beam count (1 = eighth, 2 = sixteenth,
+    /// 3 = thirty-second). Returns `None` for a lone / non-beamable column.
+    ///
+    /// The rhythmic value is taken from the **inter-onset gap** between consecutive columns, not
+    /// from each note's stored MIDI duration: real files often give the first note of a run a long
+    /// (held / overlapping) duration that would otherwise classify it as a quarter and split it off
+    /// the beam — exactly the "single note + group of 3" artefact. The run extends while
+    /// consecutive gaps keep the same value, stays inside one quarter beat (beams never cross a
+    /// beat), and is capped at the count of that value fitting one beat (eighths → 2, sixteenths →
+    /// 4, thirty-seconds → 8), so a beam never holds more notes than a beat's worth.
+    fn beam_run_end(
+        &self,
+        columns: &[VoiceColumn],
+        i: usize,
+        quarter: f32,
+        ms: f32,
+    ) -> Option<(usize, u8)> {
+        let n = columns.len();
+        if i + 1 >= n {
+            return None;
+        }
+        let beat_end = ms + (((columns[i].t - ms) / quarter).floor() + 1.0) * quarter;
+        let eps = quarter * 0.02; // absorb float error at the exact beat boundary
+        if columns[i + 1].t >= beat_end - eps {
+            return None;
+        }
+        let f = classify((columns[i + 1].t - columns[i].t) / quarter).2;
+        if f < 1 {
+            return None;
+        }
+        let cap = match f {
+            1 => 2,
+            2 => 4,
+            _ => 8,
+        };
+        let mut j = i + 1;
+        while j + 1 < n && (j + 1 - i) < cap && columns[j + 1].t < beat_end - eps {
+            if classify((columns[j + 1].t - columns[j].t) / quarter).2 != f {
+                break;
+            }
+            j += 1;
+        }
+        Some((j, f))
+    }
+
+    /// Resolve the per-notehead geometry for one column on `staff`.
+    fn voice_vns(&self, notes: &[&MidiNote], treble: bool, quarter: f32) -> Vec<VN> {
+        notes
+            .iter()
+            .map(|n| {
+                let step = pitch::diatonic_step(n.note);
+                let y = self.y_for_step(treble, step);
+                let beats = n.duration.as_secs_f32() / quarter.max(0.001);
+                let (head, has_stem, flags) = classify(beats);
+                VN { y, step, head, has_stem, flags, midi: n.note }
+            })
+            .collect()
+    }
+
+    /// Ledger lines + accidentals + noteheads for `vns` at horizontal `x`, all scaled by
+    /// `head_scale` (1.0 for normal notes, smaller for grace notes). Shared by the lone column
+    /// path ([`Self::draw_voice`]), the beamed-group path ([`Self::draw_beamed_group`]), and the
+    /// grace-note path ([`Self::draw_grace`]).
+    fn draw_note_decos(
+        &self,
+        vns: &[VN],
+        treble: bool,
+        x: f32,
+        head_scale: f32,
+        color: Color,
+        out: &mut Vec<Cmd>,
+    ) {
+        let top_step = pitch::diatonic_step(pitch::top_line_midi(treble));
+        let bounds = pitch::StaffBounds {
+            top: top_step,
+            bottom: top_step - 8,
+        };
+        // ledger lines (per note)
+        for vn in vns {
+            for ls in bounds.ledger_steps(vn.step) {
+                let ly = self.y_for_step(treble, ls);
+                out.push(Cmd::Quad(quad(
+                    x - LINE_SPACING * 0.8 * head_scale,
+                    ly,
+                    LINE_SPACING * 1.6 * head_scale,
+                    1.0,
+                    COL_LEDGER,
+                )));
+            }
+        }
+        // accidentals (per note)
+        for vn in vns {
+            if pitch::is_black_key(vn.midi)
+                && !key_signature_letters(self.key_signature).contains(&note_letter(vn.midi))
+            {
+                let ch = if self.key_signature >= 0 {
+                    glyphs::cp::SHARP
+                } else {
+                    glyphs::cp::FLAT
+                };
+                out.push(Cmd::Glyph(GlyphTask {
+                    ch,
+                    x: x - LINE_SPACING * 1.1 * head_scale,
+                    y: vn.y,
+                    color,
+                    scale: ACCIDENTAL_SCALE * head_scale,
+                }));
+            }
+        }
+        // noteheads
+        for vn in vns {
+            out.push(Cmd::Glyph(GlyphTask {
+                ch: vn.head,
+                x,
+                y: vn.y,
+                color,
+                scale: head_scale,
+            }));
+        }
+    }
+
+    /// Draw one column (notes on one staff, same start time): decorations plus a single shared
+    /// stem + flag. The stem is measured from the outermost head — highest pitch for treble (stem
+    /// up), lowest pitch for bass (stem down) — and extends `stem_len` past it, so the flag sits at
+    /// the true stem end, not near the heads. This is the lone-column path; beamed columns go
+    /// through [`Self::draw_beamed_group`].
     fn draw_voice(
         &self,
         voice: &[&MidiNote],
@@ -608,74 +771,8 @@ impl StaffRenderer {
         let (ni, _) = self.measure_frac(voice[0].start.as_secs_f32());
         let quarter = self.measure_duration_sec(ni) * 0.25;
 
-        struct VN {
-            y: f32,
-            step: i32,
-            head: char,
-            has_stem: bool,
-            flags: u8,
-            midi: u8,
-        }
-        let vns: Vec<VN> = voice
-            .iter()
-            .map(|n| {
-                let step = pitch::diatonic_step(n.note);
-                let y = self.y_for_step(treble, step);
-                let beats = n.duration.as_secs_f32() / quarter.max(0.001);
-                let (head, has_stem, flags) = classify(beats);
-                VN { y, step, head, has_stem, flags, midi: n.note }
-            })
-            .collect();
-
-        // ledger lines (per note)
-        let top_step = pitch::diatonic_step(pitch::top_line_midi(treble));
-        let bounds = pitch::StaffBounds {
-            top: top_step,
-            bottom: top_step - 8,
-        };
-        for vn in &vns {
-            for ls in bounds.ledger_steps(vn.step) {
-                let ly = self.y_for_step(treble, ls);
-                out.push(Cmd::Quad(quad(
-                    x - LINE_SPACING * 0.8,
-                    ly,
-                    LINE_SPACING * 1.6,
-                    1.0,
-                    COL_LEDGER,
-                )));
-            }
-        }
-
-        // accidentals (per note)
-        for vn in &vns {
-            if pitch::is_black_key(vn.midi)
-                && !key_signature_letters(self.key_signature).contains(&note_letter(vn.midi))
-            {
-                let ch = if self.key_signature >= 0 {
-                    glyphs::cp::SHARP
-                } else {
-                    glyphs::cp::FLAT
-                };
-                out.push(Cmd::Glyph(GlyphTask {
-                    ch,
-                    x: x - LINE_SPACING * 1.1,
-                    y: vn.y,
-                    color,
-                    scale: ACCIDENTAL_SCALE,
-                }));
-            }
-        }
-
-        // noteheads
-        for vn in &vns {
-            out.push(Cmd::Glyph(GlyphTask {
-                ch: vn.head,
-                x,
-                y: vn.y,
-                color,
-                scale: 1.0,
-            }));
-        }
+        let vns = self.voice_vns(voice, treble, quarter);
+        self.draw_note_decos(&vns, treble, x, 1.0, color, out);
 
         // shared stem + flag, from the outermost head
         let any_stem = vns.iter().any(|v| v.has_stem);
@@ -704,7 +801,7 @@ impl StaffRenderer {
             if flags > 0 {
                 let ch = glyphs::cp::flag(flags, stem_down);
                 // The flag attaches at the stem's left edge (stem_x) and the stem end (flag_y);
-                // the ink box is anchored to this point in the placement loop above.
+                // the ink box is anchored to this point in the placement loop in `update`.
                 out.push(Cmd::Glyph(GlyphTask {
                     ch,
                     x: stem_x,
@@ -713,6 +810,217 @@ impl StaffRenderer {
                     scale: 1.0,
                 }));
             }
+        }
+    }
+
+    /// Walk one voice's columns (sorted by time). A column that is a grace note (very short note
+    /// crushed just before a longer main note) is drawn small via [`Self::draw_grace`] and skipped
+    /// past; otherwise each column either starts a beamed group ([`Self::beam_run_end`]) or — if
+    /// lone / not beamable — is drawn through [`Self::draw_voice`] with an individual flag. A
+    /// "beat" is one quarter note, matching how `classify` measures note values, so beams never
+    /// cross a quarter-note boundary.
+    fn draw_voice_stream(
+        &self,
+        columns: &[VoiceColumn],
+        treble: bool,
+        out: &mut Vec<Cmd>,
+    ) {
+        let n = columns.len();
+        let mut i = 0;
+        while i < n {
+            let (mi, _) = self.measure_frac(columns[i].t);
+            let quarter = self.measure_duration_sec(mi) * 0.25;
+            let ms = self.measures.get(mi).map(|d| d.as_secs_f32()).unwrap_or(0.0);
+
+            // Grace note (倚音): a two-note "short crush + main" group. The grace is a note whose
+            // stored duration is ≤ a 32nd — a note value too short to match the prevailing tempo,
+            // so it reads as an ornament — crushed immediately before a longer main note of any
+            // value. The group is exactly two notes: the main is longer than a 32nd, so a run of
+            // equal-short notes beams together instead of every note reading as a grace. Drawn
+            // small, just before the main notehead.
+            //
+            // The grace is classified by its **stored duration**, not the inter-onset gap: a real
+            // grace is released almost instantly (short duration), whereas a short gap with a
+            // *long* held duration is a rolled chord / arpeggio (琶音), not a grace. Using the gap
+            // alone would wrongly turn those arpeggio notes into grace notes.
+            let q = quarter.max(0.001);
+            let is_grace = i + 1 < n
+                && columns[i]
+                    .notes
+                    .iter()
+                    .all(|n| classify(n.duration.as_secs_f32() / q).2 >= 3)
+                && columns[i + 1]
+                    .notes
+                    .iter()
+                    .any(|n| classify(n.duration.as_secs_f32() / q).2 < 3)
+                && columns[i + 1].t - columns[i].t <= quarter * 0.5;
+            if is_grace {
+                self.draw_grace(&columns[i], columns[i + 1].x, treble, out);
+                i += 1;
+                continue;
+            }
+
+            match self.beam_run_end(columns, i, quarter, ms) {
+                Some((j, f)) => {
+                    self.draw_beamed_group(&columns[i..=j], treble, f, out);
+                    i = j + 1;
+                }
+                None => {
+                    self.draw_voice(
+                        &columns[i].notes,
+                        columns[i].x,
+                        treble,
+                        columns[i].color,
+                        out,
+                    );
+                    i += 1;
+                }
+            }
+        }
+    }
+
+    /// Draw a grace note (倚音) column: a smaller notehead (with a short stem) placed just left of
+    /// the following main notehead (`main_x`), instead of at the grace's literal (overlapping) time
+    /// position. No beam/flag — the small size and pre-main placement read as an ornament.
+    fn draw_grace(&self, col: &VoiceColumn, main_x: f32, treble: bool, out: &mut Vec<Cmd>) {
+        let stem_down = !treble;
+        let nh_half = LINE_SPACING * 0.5 * GRACE_SCALE;
+        let stem_w = 1.0;
+        let gx = main_x - GRACE_OFFSET;
+
+        let vns: Vec<VN> = col
+            .notes
+            .iter()
+            .map(|n| {
+                let step = pitch::diatonic_step(n.note);
+                let y = self.y_for_step(treble, step);
+                VN {
+                    y,
+                    step,
+                    head: glyphs::cp::NOTEHEAD_BLACK,
+                    has_stem: true,
+                    flags: 0,
+                    midi: n.note,
+                }
+            })
+            .collect();
+        self.draw_note_decos(&vns, treble, gx, GRACE_SCALE, col.color, out);
+
+        // short stem from the outermost head (highest for stem-up, lowest for stem-down)
+        let y_hi = vns.iter().map(|v| v.y).fold(f32::INFINITY, f32::min);
+        let y_lo = vns.iter().map(|v| v.y).fold(f32::NEG_INFINITY, f32::max);
+        let stem_x = if stem_down {
+            gx - nh_half
+        } else {
+            gx + nh_half - stem_w
+        };
+        let (top, h) = if stem_down {
+            let bottom = y_lo + GRACE_STEM_LEN;
+            (y_hi, bottom - y_hi)
+        } else {
+            let top = y_hi - GRACE_STEM_LEN;
+            (top, y_lo - top)
+        };
+        out.push(Cmd::Quad(quad(stem_x, top, stem_w, h, COL_STEM)));
+    }
+
+    /// Draw a beamed group: `flags` parallel horizontal beams (8th = 1, 16th = 2, 32nd = 3)
+    /// connecting one stem per column. Beams are flat because the renderer's quads are
+    /// axis-aligned (no rotation), so a slanted beam can't be drawn as a single shape. Each stem
+    /// runs from its column's outermost head to the beam line; the primary beam sits `stem_len`
+    /// past the outermost head of the whole group, and secondary beams step toward the heads.
+    fn draw_beamed_group(
+        &self,
+        cols: &[VoiceColumn],
+        treble: bool,
+        flags: u8,
+        out: &mut Vec<Cmd>,
+    ) {
+        let stem_down = !treble;
+        let stem_len = 3.0 * LINE_SPACING;
+        let stem_w = 1.2;
+        let nh_half = LINE_SPACING * 0.5;
+        let beam_thick = LINE_SPACING * 0.3;
+        let beam_gap = LINE_SPACING * 0.5; // centre-to-centre between parallel beams
+
+        let (mi, _) = self.measure_frac(cols[0].t);
+        let quarter = self.measure_duration_sec(mi) * 0.25;
+
+        // per-column notehead geometry + decorations
+        let col_vns: Vec<Vec<VN>> = cols
+            .iter()
+            .map(|c| {
+                let mut vns = self.voice_vns(&c.notes, treble, quarter);
+                // a beamed note is 8th-or-shorter by definition → always a filled notehead,
+                // regardless of the (often long, held) stored MIDI duration that `voice_vns`
+                // classified from.
+                for v in vns.iter_mut() {
+                    v.head = glyphs::cp::NOTEHEAD_BLACK;
+                }
+                vns
+            })
+            .collect();
+        for (c, vns) in cols.iter().zip(col_vns.iter()) {
+            self.draw_note_decos(vns, treble, c.x, 1.0, c.color, out);
+        }
+
+        // outermost head per column on the beam side:
+        //   stem-up   -> highest pitch (min screen y)
+        //   stem-down -> lowest pitch  (max screen y)
+        let outer_y: Vec<f32> = col_vns
+            .iter()
+            .map(|vns| {
+                if stem_down {
+                    vns.iter().map(|v| v.y).fold(f32::NEG_INFINITY, f32::max)
+                } else {
+                    vns.iter().map(|v| v.y).fold(f32::INFINITY, f32::min)
+                }
+            })
+            .collect();
+
+        // primary beam line: flat, `stem_len` past the outermost head of the whole group
+        let group_outer = if stem_down {
+            outer_y.iter().copied().fold(f32::NEG_INFINITY, f32::max)
+        } else {
+            outer_y.iter().copied().fold(f32::INFINITY, f32::min)
+        };
+        let beam_y = if stem_down {
+            group_outer + stem_len
+        } else {
+            group_outer - stem_len
+        };
+
+        // one stem per column, head -> beam line
+        for (k, c) in cols.iter().enumerate() {
+            let stem_x = if stem_down {
+                c.x - nh_half
+            } else {
+                c.x + nh_half - stem_w
+            };
+            let (top, h) = if stem_down {
+                (outer_y[k], beam_y - outer_y[k])
+            } else {
+                (beam_y, outer_y[k] - beam_y)
+            };
+            out.push(Cmd::Quad(quad(stem_x, top, stem_w, h, COL_STEM)));
+        }
+
+        // beams: cap the stems exactly — first stem's left edge to last stem's right edge
+        let first_x = cols.first().unwrap().x;
+        let last_x = cols.last().unwrap().x;
+        let (bx, bw) = if stem_down {
+            (first_x - nh_half, (last_x - first_x) + stem_w)
+        } else {
+            (first_x + nh_half - stem_w, (last_x - first_x) + stem_w)
+        };
+        for b in 0..flags {
+            // primary beam outermost; secondary beams step toward the heads
+            let y = if stem_down {
+                beam_y - b as f32 * beam_gap
+            } else {
+                beam_y + b as f32 * beam_gap
+            };
+            out.push(Cmd::Quad(quad(bx, y, bw, beam_thick, COL_STEM)));
         }
     }
 
