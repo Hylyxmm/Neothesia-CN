@@ -37,6 +37,18 @@ const BARLINE_NUDGE: f32 = 1.0 * LINE_SPACING;
 const GRACE_SCALE: f32 = 0.6;
 const GRACE_STEM_LEN: f32 = 2.0 * LINE_SPACING;
 const GRACE_OFFSET: f32 = 1.5 * LINE_SPACING;
+/// Ottava (8va/8vb/15ma/15mb) lines: a note that would need a 4th ledger line — beyond the 3 we
+/// made room for (上加三线 / 下加三线) — is instead drawn transposed back into the staff with a
+/// bracket marking the shift. `OTTAVA_LEDGER_MAX` is the most diatonic steps a note may sit from
+/// the staff edge (top or bottom line) before an ottava kicks in: 7 = the space just past the 3rd
+/// ledger line (still 3 lines, fits); 8 = the 4th ledger line (would clip → ottava).
+const OTTAVA_LEDGER_MAX: i32 = 7;
+const OTTAVA_LABEL_SIZE: f32 = 1.4 * LINE_SPACING; // "8va" text height
+/// How many measures past the last visible column to pre-scan when detecting ottava runs, so a
+/// run's bracket resolves to its true final note (off-screen) instead of growing as notes slide
+/// into view. A few measures is enough: an ottava run rarely spans more than a couple of measures
+/// ahead of the playhead.
+const OTTAVA_LOOKAHEAD_MEASURES: usize = 4;
 const TREBLE_TOP_OFFSET: f32 = 14.0;
 // 2 line-spacings so middle C (C4) is a single shared ledger line between the two staves.
 const INTER_STAFF_GAP: f32 = 2.0 * LINE_SPACING;
@@ -48,8 +60,9 @@ const CLEF_BLOCK_W: f32 = 80.0;
 /// The band is also the scissor rect, so notes whose ledger lines reach above the treble staff
 /// (上加线) or below the bass staff (下加线) are hard-clipped at the band edge. The staff system
 /// is centred vertically in the band, so widening the band adds ledger room equally above and
-/// below. Widened 20% (166 → ~199) so 2–3 ledger-line notes fit instead of being cut off.
-const BAND_H: f32 = 199.0;
+/// below. Widened (166 → ~199 → 220) so 2–3 ledger-line notes fit and ottava brackets pinned to
+/// the band edges clear the transposed notes with room to spare.
+const BAND_H: f32 = 220.0;
 /// Sharps/flats render a bit smaller than other glyphs.
 const ACCIDENTAL_SCALE: f32 = 0.8;
 /// Flags render smaller so they don't visually dominate at this font size.
@@ -88,6 +101,8 @@ const GLYPH_DY: f32 = 0.0;
 enum Cmd {
     Quad(QuadInstance),
     Glyph(GlyphTask),
+    /// A short text label (Roboto, e.g. "8va") drawn centred at (x, y).
+    Label { text: &'static str, x: f32, y: f32 },
 }
 
 /// A single SMuFL char centered at (x, y) with a color and render scale.
@@ -97,6 +112,13 @@ struct GlyphTask {
     y: f32,
     color: Color,
     scale: f32,
+}
+
+/// A deferred text label (default font, not SMuFL) centred at (x, y).
+struct LabelTask {
+    text: &'static str,
+    x: f32,
+    y: f32,
 }
 
 /// Resolved geometry of one notehead within a voice (single staff): its screen y, diatonic step,
@@ -113,11 +135,22 @@ struct VN {
 /// One "column" in a voice stream: every note sharing a single start time on one staff (a chord),
 /// together with its draw position and play-state color. Consecutive columns are the units that
 /// beaming groups together.
+#[derive(Clone)]
 struct VoiceColumn<'a> {
     t: f32,
     notes: Vec<&'a MidiNote>,
     x: f32,
     color: Color,
+}
+
+/// A maximal run of consecutive columns that all need the same octave bracket: notes too high get
+/// an 8va/15ma bracket above the staff (drawn shifted down), notes too low get an 8vb/15mb bracket
+/// below (drawn shifted up). `shift` is the octave count (1 = 8va/8vb, 2 = 15ma/15mb).
+struct OttavaRun {
+    start: usize,
+    end: usize,
+    shift: u8,
+    high: bool,
 }
 
 pub struct StaffRenderer {
@@ -135,6 +168,9 @@ pub struct StaffRenderer {
     quads: QuadRenderer,
     text: TextRenderer,
     glyphs: glyphs::GlyphCache,
+    /// Cached Roboto buffers for the four ottava labels ("8va", "15ma", "8vb", "15mb") with their
+    /// measured (width, height), so the bracket line can be broken around the centred label.
+    labels: HashMap<&'static str, (glyphon::Buffer, f32, f32)>,
 
     // layout (set in resize/compute_vertical_layout)
     win_w: f32,
@@ -197,6 +233,16 @@ fn nearest_step(letter: i32, center: i32) -> i32 {
     letter + 7 * k
 }
 
+/// Ottava bracket label for a run: above the staff (high) → 8va / 15ma, below (low) → 8vb / 15mb.
+fn ottava_label(high: bool, shift: u8) -> &'static str {
+    match (high, shift) {
+        (true, 1) => "8va",
+        (true, _) => "15ma",
+        (false, 1) => "8vb",
+        (false, _) => "15mb",
+    }
+}
+
 impl StaffRenderer {
     pub fn new(
         notes: NoteList,
@@ -215,6 +261,7 @@ impl StaffRenderer {
             quads,
             text,
             glyphs: glyphs::GlyphCache::new(),
+            labels: Self::build_label_cache(),
             win_w: 0.0,
             band_h: 0.0,
             treble_top: 0.0,
@@ -225,6 +272,19 @@ impl StaffRenderer {
         s.compute_vertical_layout();
         s.compute_track_voices();
         s
+    }
+
+    /// Build the four ottava label buffers once (Roboto at `OTTAVA_LABEL_SIZE`) with their
+    /// measured (width, height), so brackets can break their line around the centred text without
+    /// re-measuring every frame.
+    fn build_label_cache() -> HashMap<&'static str, (glyphon::Buffer, f32, f32)> {
+        let mut m = HashMap::new();
+        for text in ["8va", "15ma", "8vb", "15mb"] {
+            let buf = TextRenderer::gen_buffer(OTTAVA_LABEL_SIZE, text);
+            let (w, h) = TextRenderer::measure(&buf);
+            m.insert(text, (buf, w, h));
+        }
+        m
     }
 
     /// Assign each MIDI track to a voice (treble = high voice / right hand, bass = low voice /
@@ -321,10 +381,12 @@ impl StaffRenderer {
         // COMMIT phase: disjoint mutable fields
         self.quads.clear();
         let mut tasks: Vec<GlyphTask> = Vec::new();
+        let mut labels: Vec<LabelTask> = Vec::new();
         for cmd in cmds {
             match cmd {
                 Cmd::Quad(q) => self.quads.push(q),
                 Cmd::Glyph(g) => tasks.push(g),
+                Cmd::Label { text, x, y } => labels.push(LabelTask { text, x, y }),
             }
         }
 
@@ -333,7 +395,8 @@ impl StaffRenderer {
         self.glyphs
             .ensure(tasks.iter().map(|t| t.ch), FONT_SIZE);
         let cache = &self.glyphs;
-        let mut areas: Vec<glyphon::TextArea> = Vec::with_capacity(tasks.len());
+        let label_cache = &self.labels;
+        let mut areas: Vec<glyphon::TextArea> = Vec::with_capacity(tasks.len() + labels.len());
         for t in &tasks {
             let (buffer, w, h, ink) = cache.get_ref(t.ch);
             // Flags are anchored by their true ink box: the SMuFL flag's ink left edge is its
@@ -367,6 +430,20 @@ impl StaffRenderer {
                 default_color: t.color,
                 custom_glyphs: &[],
             });
+        }
+        // Ottava labels (Roboto): centre each cached buffer on its (x, y).
+        for lab in &labels {
+            if let Some((buffer, w, h)) = label_cache.get(lab.text) {
+                areas.push(glyphon::TextArea {
+                    buffer,
+                    left: lab.x - w * 0.5,
+                    top: lab.y - h * 0.5,
+                    scale: 1.0,
+                    bounds: glyphon::TextBounds::default(),
+                    default_color: COL_WHITE,
+                    custom_glyphs: &[],
+                });
+            }
         }
         self.text
             .update_from_iter(physical_size, scale, areas.into_iter());
@@ -540,7 +617,7 @@ impl StaffRenderer {
                 });
             }
             if !columns.is_empty() {
-                self.draw_voice_stream(&columns, treble, &mut out);
+                self.draw_voice_stream(&columns, treble, time, playhead_x, speed, &mut out);
             }
         }
 
@@ -672,12 +749,20 @@ impl StaffRenderer {
         Some((j, f))
     }
 
-    /// Resolve the per-notehead geometry for one column on `staff`.
-    fn voice_vns(&self, notes: &[&MidiNote], treble: bool, quarter: f32) -> Vec<VN> {
+    /// Resolve the per-notehead geometry for one column on `staff`. `shift` (diatonic steps) is
+    /// applied to the staff step only — for ottava, so the notehead renders transposed while its
+    /// midi (and thus accidental) stays true.
+    fn voice_vns(
+        &self,
+        notes: &[&MidiNote],
+        treble: bool,
+        quarter: f32,
+        shift: i32,
+    ) -> Vec<VN> {
         notes
             .iter()
             .map(|n| {
-                let step = pitch::diatonic_step(n.note);
+                let step = pitch::diatonic_step(n.note) + shift;
                 let y = self.y_for_step(treble, step);
                 let beats = n.duration.as_secs_f32() / quarter.max(0.001);
                 let (head, has_stem, flags) = classify(beats);
@@ -759,6 +844,7 @@ impl StaffRenderer {
         x: f32,
         treble: bool,
         color: Color,
+        shift: i32,
         out: &mut Vec<Cmd>,
     ) {
         let stem_down = !treble;
@@ -768,10 +854,10 @@ impl StaffRenderer {
 
         // Note value (relative to a quarter) is shared: every note in the chord starts together,
         // so the measure / quarter duration is the same for all of them.
-        let (ni, _) = self.measure_frac(voice[0].start.as_secs_f32());
-        let quarter = self.measure_duration_sec(ni) * 0.25;
+        let (mi, _) = self.measure_frac(voice[0].start.as_secs_f32());
+        let quarter = self.measure_duration_sec(mi) * 0.25;
 
-        let vns = self.voice_vns(voice, treble, quarter);
+        let vns = self.voice_vns(voice, treble, quarter, shift);
         self.draw_note_decos(&vns, treble, x, 1.0, color, out);
 
         // shared stem + flag, from the outermost head
@@ -813,19 +899,282 @@ impl StaffRenderer {
         }
     }
 
-    /// Walk one voice's columns (sorted by time). A column that is a grace note (very short note
-    /// crushed just before a longer main note) is drawn small via [`Self::draw_grace`] and skipped
-    /// past; otherwise each column either starts a beamed group ([`Self::beam_run_end`]) or — if
-    /// lone / not beamable — is drawn through [`Self::draw_voice`] with an individual flag. A
-    /// "beat" is one quarter note, matching how `classify` measures note values, so beams never
-    /// cross a quarter-note boundary.
+    /// Find maximal runs of consecutive columns whose notes need an octave bracket — i.e. they'd
+    /// land beyond the 3 ledger lines we have room for (more than `OTTAVA_LEDGER_MAX` diatonic
+    /// steps past a staff edge). Each run is uniformly high (8va/15ma) or low (8vb/15mb); a column
+    /// with both an out-of-range high and low note is treated as high. The shift is the smallest
+    /// octave count (capped at 2) that brings the run's extreme note back inside the range.
+    fn ottava_runs(&self, columns: &[VoiceColumn], treble: bool) -> Vec<OttavaRun> {
+        let top = pitch::diatonic_step(pitch::top_line_midi(treble));
+        let bottom = top - 8;
+        let kind_of = |col: &VoiceColumn| -> Option<bool> {
+            let max_step = col
+                .notes
+                .iter()
+                .map(|n| pitch::diatonic_step(n.note))
+                .max()
+                .unwrap_or(top);
+            let min_step = col
+                .notes
+                .iter()
+                .map(|n| pitch::diatonic_step(n.note))
+                .min()
+                .unwrap_or(top);
+            if max_step - top > OTTAVA_LEDGER_MAX {
+                Some(true)
+            } else if bottom - min_step > OTTAVA_LEDGER_MAX {
+                Some(false)
+            } else {
+                None
+            }
+        };
+        let mut runs = Vec::new();
+        let n = columns.len();
+        let mut i = 0;
+        while i < n {
+            let Some(is_high) = kind_of(&columns[i]) else {
+                i += 1;
+                continue;
+            };
+            let mut j = i;
+            let mut run_max = i32::MIN;
+            let mut run_min = i32::MAX;
+            while j < n && kind_of(&columns[j]) == Some(is_high) {
+                for nn in &columns[j].notes {
+                    let s = pitch::diatonic_step(nn.note);
+                    run_max = run_max.max(s);
+                    run_min = run_min.min(s);
+                }
+                j += 1;
+            }
+            let shift = if is_high {
+                let excess = run_max - (top + OTTAVA_LEDGER_MAX);
+                (((excess + 6) / 7).max(1) as u8).min(2)
+            } else {
+                let excess = (bottom - OTTAVA_LEDGER_MAX) - run_min;
+                (((excess + 6) / 7).max(1) as u8).min(2)
+            };
+            runs.push(OttavaRun { start: i, end: j - 1, shift, high: is_high });
+            i = j;
+        }
+        runs
+    }
+
+    /// Draw one ottava bracket: a horizontal line (broken around the centred label) with a short
+    /// hook at each end pointing toward the staff — a "lying [". Pinned to the band's top edge for
+    /// 8va/15ma (high notes shifted down) or the bottom edge for 8vb/15mb (low notes shifted up),
+    /// so it sits clear of the transposed notes on both staves. Line + hooks are quads; the label
+    /// is deferred via [`Cmd::Label`].
+    fn draw_ottava_bracket(
+        &self,
+        cols: &[VoiceColumn],
+        run: &OttavaRun,
+        out: &mut Vec<Cmd>,
+    ) {
+        let start_x = cols[run.start].x - LINE_SPACING * 0.9;
+        let end_x = cols[run.end].x + LINE_SPACING * 0.9;
+        // Pin the bracket to the band's top edge (8va, high notes shift down) or bottom edge (8vb,
+        // low notes shift up) instead of sitting just outside a single staff, maximising clearance
+        // from the transposed notes. `label_half` keeps the glyph inside the scissor rect; the label
+        // may overlap the soft EDGE_FADE band but stays readable.
+        let label_half = OTTAVA_LABEL_SIZE * 0.5;
+        let (bracket_y, hooks_down) = if run.high {
+            (STAFF_TOP_Y + label_half, true)
+        } else {
+            (STAFF_TOP_Y + BAND_H - label_half, false)
+        };
+
+        let label = ottava_label(run.high, run.shift);
+        let label_w = self
+            .labels
+            .get(label)
+            .map(|(_, w, _)| *w)
+            .unwrap_or(OTTAVA_LABEL_SIZE * 2.0);
+        let mid_x = (start_x + end_x) * 0.5;
+        let half = label_w * 0.5 + LINE_SPACING * 0.5;
+        let thick = 1.2;
+        let hook_len = LINE_SPACING * 0.9;
+
+        // horizontal line, broken around the centred label
+        let left_w = (mid_x - half) - start_x;
+        if left_w > 0.0 {
+            out.push(Cmd::Quad(quad(
+                start_x,
+                bracket_y - thick * 0.5,
+                left_w,
+                thick,
+                COL_STEM,
+            )));
+        }
+        let right_x = mid_x + half;
+        let right_w = end_x - right_x;
+        if right_w > 0.0 {
+            out.push(Cmd::Quad(quad(
+                right_x,
+                bracket_y - thick * 0.5,
+                right_w,
+                thick,
+                COL_STEM,
+            )));
+        }
+        // hooks at both ends, pointing toward the staff
+        let (hy, hh) = if hooks_down {
+            (bracket_y, hook_len)
+        } else {
+            (bracket_y - hook_len, hook_len)
+        };
+        out.push(Cmd::Quad(quad(start_x, hy, thick, hh, COL_STEM)));
+        out.push(Cmd::Quad(quad(end_x - thick, hy, thick, hh, COL_STEM)));
+        // centred label
+        out.push(Cmd::Label {
+            text: label,
+            x: mid_x,
+            y: bracket_y,
+        });
+    }
+
+    /// Walk one voice's columns (sorted by time). First, columns whose notes fall outside the
+    /// staff's 3-ledger-line range are grouped into ottava runs ([`Self::ottava_runs`]) and drawn
+    /// transposed under a bracket ([`Self::draw_ottava_bracket`]); the per-column shift is applied
+    /// to every draw path below. Then a column that is a grace note (very short note crushed just
+    /// before a longer main note) is drawn small via [`Self::draw_grace`] and skipped past;
+    /// otherwise each column either starts a beamed group ([`Self::beam_run_end`]) or — if lone /
+    /// not beamable — is drawn through [`Self::draw_voice`] with an individual flag.
+    /// Build an extended column set for ottava run detection: the visible `columns` sit in the
+    /// middle, padded with extra (off-screen) columns on **both** sides — `OTTAVA_LOOKAHEAD_MEASURES`
+    /// worth to the left and to the right. This lets an ottava run's `start`/`end` resolve to its
+    /// true first/last note even when those notes have already scrolled off the left edge or haven't
+    /// entered yet, so the bracket is drawn at its full final length and neither grows (right side)
+    /// nor shrinks (left side) as notes slide in and out of view.
+    ///
+    /// Returns the extended vector plus `vis_offset` — the index in it where the visible `columns`
+    /// block begins (the visible block occupies `[vis_offset, vis_offset + columns.len())`).
+    ///
+    /// The extension reuses the same note→staff routing (`note_is_treble`) and x-mapping
+    /// (`playhead_x + (t - time) * speed`) as `build()`, so extended columns line up exactly with
+    /// the visible ones. Color is irrelevant to ottava detection, so extended columns use
+    /// `COL_WHITE` as a placeholder.
+    fn extend_columns<'a>(
+        &'a self,
+        columns: &[VoiceColumn<'a>],
+        treble: bool,
+        time: f32,
+        playhead_x: f32,
+        speed: f32,
+    ) -> (Vec<VoiceColumn<'a>>, usize) {
+        let n = columns.len();
+        if speed <= 0.0 || n == 0 {
+            return (columns.to_vec(), 0);
+        }
+
+        let first_t = columns[0].t;
+        let last_t = columns[n - 1].t;
+        let (mi, _) = self.measure_frac(last_t);
+        let measure_dur = self.measure_duration_sec(mi);
+        let span = OTTAVA_LOOKAHEAD_MEASURES as f32 * measure_dur;
+        let ext_lo_t = first_t - span;
+        let ext_hi_t = last_t + span;
+
+        // Collect the extended columns from self.notes.inner over [ext_lo_t, ext_hi_t], excluding
+        // the visible window (first_t..=last_t) which is already in `columns`. Group same-start
+        // notes into one column (a chord), matching build()'s logic.
+        let mut left: Vec<VoiceColumn<'a>> = Vec::new();
+        let mut right: Vec<VoiceColumn<'a>> = Vec::new();
+        let start_idx = self
+            .notes
+            .inner
+            .partition_point(|nn| nn.start.as_secs_f32() < ext_lo_t);
+        for nn in self.notes.inner.iter().skip(start_idx) {
+            let t = nn.start.as_secs_f32();
+            if t > ext_hi_t {
+                break;
+            }
+            if nn.channel == 9 {
+                continue;
+            }
+            if self.note_is_treble(nn) != treble {
+                continue;
+            }
+            // Inside the visible window — already covered by `columns`.
+            if t >= first_t && t <= last_t {
+                continue;
+            }
+            let x = playhead_x + (t - time) * speed;
+            let bucket = if t < first_t { &mut left } else { &mut right };
+            if let Some(last) = bucket.last_mut() {
+                if last.t == t {
+                    last.notes.push(nn);
+                    continue;
+                }
+            }
+            bucket.push(VoiceColumn {
+                t,
+                notes: vec![nn],
+                x,
+                color: COL_WHITE,
+            });
+        }
+
+        // Assemble: [left (ascending)] + [visible columns] + [right (ascending)].
+        // `left` was collected ascending already (forward scan), but we built it by push, and the
+        // scan is ascending so left is ascending. Good. Record where the visible block starts.
+        let vis_offset = left.len();
+        let mut ext = left;
+        ext.extend_from_slice(columns);
+        ext.extend(right);
+        (ext, vis_offset)
+    }
+
     fn draw_voice_stream(
         &self,
         columns: &[VoiceColumn],
         treble: bool,
+        time: f32,
+        playhead_x: f32,
+        speed: f32,
         out: &mut Vec<Cmd>,
     ) {
         let n = columns.len();
+        if n == 0 {
+            return;
+        }
+
+        // Ottava (8va/8vb): per-column draw-shift (diatonic steps) so out-of-range notes render
+        // back into the staff — high notes shift down (8va, bracket above), low notes shift up
+        // (8vb, bracket below).
+        //
+        // To keep the bracket at a stable full length, the run scan uses an *extended* column set
+        // that pads the visible window on BOTH sides by a few measures: a run's `start`/`end` then
+        // resolve to its true first/last note even when those have scrolled off the left or haven't
+        // entered from the right yet. The visible `columns` sit in `ext_columns` at
+        // `[vis_offset, vis_offset + n)`; run indices (into ext) map back to visible indices by
+        // subtracting `vis_offset` and clamping to the visible block.
+        let (ext_columns, vis_offset) =
+            self.extend_columns(columns, treble, time, playhead_x, speed);
+        let runs = self.ottava_runs(&ext_columns, treble);
+        // col_shift is indexed by *visible* `columns`. For each ext-run, translate its [start..=end]
+        // span to visible indices and apply the shift where they overlap the visible block.
+        let vis_end = vis_offset + n; // exclusive
+        let col_shift: Vec<i32> = {
+            let mut s = vec![0i32; n];
+            for r in &runs {
+                let v = (if r.high { -1 } else { 1 }) * 7 * r.shift as i32;
+                let lo = r.start.max(vis_offset) - vis_offset;
+                let hi = (r.end + 1).min(vis_end) - vis_offset;
+                for k in lo..hi {
+                    s[k] = v;
+                }
+            }
+            s
+        };
+        for r in &runs {
+            // Only draw a bracket if its span overlaps the visible block; runs entirely off-screen
+            // (left or right) produce nothing to see.
+            if r.start < vis_end && r.end >= vis_offset {
+                self.draw_ottava_bracket(&ext_columns, r, out);
+            }
+        }
+
         let mut i = 0;
         while i < n {
             let (mi, _) = self.measure_frac(columns[i].t);
@@ -833,16 +1182,9 @@ impl StaffRenderer {
             let ms = self.measures.get(mi).map(|d| d.as_secs_f32()).unwrap_or(0.0);
 
             // Grace note (倚音): a two-note "short crush + main" group. The grace is a note whose
-            // stored duration is ≤ a 32nd — a note value too short to match the prevailing tempo,
-            // so it reads as an ornament — crushed immediately before a longer main note of any
-            // value. The group is exactly two notes: the main is longer than a 32nd, so a run of
-            // equal-short notes beams together instead of every note reading as a grace. Drawn
-            // small, just before the main notehead.
-            //
-            // The grace is classified by its **stored duration**, not the inter-onset gap: a real
-            // grace is released almost instantly (short duration), whereas a short gap with a
-            // *long* held duration is a rolled chord / arpeggio (琶音), not a grace. Using the gap
-            // alone would wrongly turn those arpeggio notes into grace notes.
+            // stored duration is ≤ a 32nd, crushed immediately before a longer main note of any
+            // value. Classified by stored duration (not inter-onset gap) so arpeggios (short gap,
+            // long held duration) aren't misread as grace.
             let q = quarter.max(0.001);
             let is_grace = i + 1 < n
                 && columns[i]
@@ -855,14 +1197,14 @@ impl StaffRenderer {
                     .any(|n| classify(n.duration.as_secs_f32() / q).2 < 3)
                 && columns[i + 1].t - columns[i].t <= quarter * 0.5;
             if is_grace {
-                self.draw_grace(&columns[i], columns[i + 1].x, treble, out);
+                self.draw_grace(&columns[i], columns[i + 1].x, treble, col_shift[i], out);
                 i += 1;
                 continue;
             }
 
             match self.beam_run_end(columns, i, quarter, ms) {
                 Some((j, f)) => {
-                    self.draw_beamed_group(&columns[i..=j], treble, f, out);
+                    self.draw_beamed_group(&columns[i..=j], treble, f, col_shift[i], out);
                     i = j + 1;
                 }
                 None => {
@@ -871,6 +1213,7 @@ impl StaffRenderer {
                         columns[i].x,
                         treble,
                         columns[i].color,
+                        col_shift[i],
                         out,
                     );
                     i += 1;
@@ -882,7 +1225,14 @@ impl StaffRenderer {
     /// Draw a grace note (倚音) column: a smaller notehead (with a short stem) placed just left of
     /// the following main notehead (`main_x`), instead of at the grace's literal (overlapping) time
     /// position. No beam/flag — the small size and pre-main placement read as an ornament.
-    fn draw_grace(&self, col: &VoiceColumn, main_x: f32, treble: bool, out: &mut Vec<Cmd>) {
+    fn draw_grace(
+        &self,
+        col: &VoiceColumn,
+        main_x: f32,
+        treble: bool,
+        shift: i32,
+        out: &mut Vec<Cmd>,
+    ) {
         let stem_down = !treble;
         let nh_half = LINE_SPACING * 0.5 * GRACE_SCALE;
         let stem_w = 1.0;
@@ -892,7 +1242,7 @@ impl StaffRenderer {
             .notes
             .iter()
             .map(|n| {
-                let step = pitch::diatonic_step(n.note);
+                let step = pitch::diatonic_step(n.note) + shift;
                 let y = self.y_for_step(treble, step);
                 VN {
                     y,
@@ -934,6 +1284,7 @@ impl StaffRenderer {
         cols: &[VoiceColumn],
         treble: bool,
         flags: u8,
+        shift: i32,
         out: &mut Vec<Cmd>,
     ) {
         let stem_down = !treble;
@@ -950,7 +1301,7 @@ impl StaffRenderer {
         let col_vns: Vec<Vec<VN>> = cols
             .iter()
             .map(|c| {
-                let mut vns = self.voice_vns(&c.notes, treble, quarter);
+                let mut vns = self.voice_vns(&c.notes, treble, quarter, shift);
                 // a beamed note is 8th-or-shorter by definition → always a filled notehead,
                 // regardless of the (often long, held) stored MIDI duration that `voice_vns`
                 // classified from.
