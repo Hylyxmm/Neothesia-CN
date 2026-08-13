@@ -13,6 +13,41 @@
 
 Neothesia 是一个用 Rust 编写的跨平台 MIDI 可视化工具（类似开源版的 Synthesia），把 MIDI 文件中的音符显示为虚拟钢琴上落下的彩色方块，帮助用户学习钢琴。
 
+## 快速开始（使用预编译二进制）
+
+仓库 `dist/` 目录下提供了已编译好的可执行文件，无需自行编译，下载后即可运行：
+
+```
+dist/
+├── linux/
+│   ├── neothesia          # Linux x86-64 可执行文件
+│   └── default.sf2        # 音源文件（必需）
+└── windows/
+    ├── neothesia.exe      # Windows x86-64 可执行文件
+    ├── default.sf2        # 音源文件（必需）
+    └── 使用说明.txt
+```
+
+### Linux
+
+```bash
+# 1. 赋予执行权限
+chmod +x dist/linux/neothesia
+
+# 2. 运行（需把 default.sf2 放在可执行文件同目录，或按提示指定）
+./dist/linux/neothesia /path/to/your.mid
+```
+
+### Windows
+
+直接双击 `dist/windows/neothesia.exe` 运行，或在命令行：
+
+```cmd
+dist\windows\neothesia.exe C:\path\to\your.mid
+```
+
+> **注意**：`default.sf2` 音源文件需与可执行文件放在同一目录，否则没有声音。首次打开也可在程序内通过菜单选择 MIDI 文件和音源。
+
 ## 改造内容
 
 相对上游版本，本分支主要做了：
@@ -21,6 +56,12 @@ Neothesia 是一个用 Rust 编写的跨平台 MIDI 可视化工具（类似开�
 - **新增五线谱（staff）预览**：在瀑布画面中加入滚动的大谱表预览，符干跟随声部。
 - **完善记谱**：支持符尾连接（beaming）、装饰音（倚音）、八度移位标记（8va/8vb 等）。
 - **拍号适配**：小节线按实际拍号计算，兼容 3/4、6/8、2/2 等拍号。
+
+## 界面预览
+
+| 主菜单（中文界面） | 游戏画面（瀑布 + 琴键 + 五线谱预览） |
+|--|--|
+| ![主菜单](docs/screenshots/screenshot-2.png) | ![游戏画面](docs/screenshots/screenshot-1.png) |
 
 ## 改造执行
 
@@ -31,14 +72,15 @@ Neothesia 是一个用 Rust 编写的跨平台 MIDI 可视化工具（类似开�
 
 人工主导需求、验收与决策。
 
-## 构建产物
+## 自行构建
 
-`dist/` 目录下提供已编译的可执行文件（仅供便利，非上游官方构建）：
+如需从源码编译，在对应平台执行：
 
-- `dist/linux/neothesia` —— Linux x86-64
-- `dist/windows/neothesia.exe` —— Windows x86-64
+```bash
+cargo build --release
+```
 
-如需自行构建，在对应平台执行 `cargo build --release`。
+编译产物位于 `target/release/`。Linux 需 `libasound2-dev`、`libgtk-3-dev` 等系统依赖。
 
 ---
 
