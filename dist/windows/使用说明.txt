@@ -1,0 +1,38 @@
+Neothesia (Windows 测试版)
+===========================
+
+本目录是在 Linux 上交叉编译的 Windows x86_64 版本（MinGW 工具链，release 优化）。
+所有 C/pthread 运行时均已静态链接，依赖的全是 Windows 自带的系统 DLL，
+因此可以直接在干净的 Windows 10 / 11 上运行，不需要额外安装任何运行库。
+
+目录内容
+--------
+  neothesia.exe   程序本体
+  default.sf2     音色库（必须和 exe 放在同一个文件夹，程序从当前目录读取 ./default.sf2）
+
+在 Windows 上运行
+-----------------
+方法 1：把整个文件夹原样拷到 Windows 上，双击 neothesia.exe 即可。
+方法 2：在该目录打开 cmd / PowerShell，运行  neothesia.exe <参数>
+
+注意
+----
+- 这是 Console 子系统程序，双击运行时会弹出一个黑色控制台窗口（属正常现象，
+  关闭窗口会同时退出程序）。日志会打印在控制台里，方便排查问题。
+- 程序使用 GPU 渲染（wgpu），需要显卡支持 DirectX 11/12 或 Vulkan。
+  如果窗口黑屏 / 报错，先更新显卡驱动再试。
+- 运行后会在同目录生成 settings.ron（配置文件），可手动编辑。
+- 需要播放声音时要确保系统有音频输出设备。
+
+如何重新构建（在 Linux 本机）
+----------------------------
+  # 安装交叉工具链与目标（一次性）
+  sudo apt-get install -y mingw-w64
+  rustup target add x86_64-pc-windows-gnu
+
+  # 编译（在 Neothesia 源码目录下）
+  CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc \
+  cargo build --release --bin neothesia --target x86_64-pc-windows-gnu
+
+  # 产物位于：
+  Neothesia/target/x86_64-pc-windows-gnu/release/neothesia.exe
