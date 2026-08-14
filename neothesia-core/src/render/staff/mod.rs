@@ -1174,14 +1174,17 @@ impl StaffRenderer {
             self.extend_columns(columns, treble, time, playhead_x, speed);
         let runs = self.ottava_runs(&ext_columns, treble);
         // col_shift is indexed by *visible* `columns`. For each ext-run, translate its [start..=end]
-        // span to visible indices and apply the shift where they overlap the visible block.
+        // span to visible indices and apply the shift where they overlap the visible block. Clamp to
+        // the visible block *before* subtracting `vis_offset`: a run that sits entirely in the left
+        // padding has `end + 1 < vis_offset`, and subtracting first would underflow usize and walk
+        // `k` far past `s.len()` (crash seen with Op_299_p24-25.mid).
         let vis_end = vis_offset + n; // exclusive
         let col_shift: Vec<i32> = {
             let mut s = vec![0i32; n];
             for r in &runs {
                 let v = (if r.high { -1 } else { 1 }) * 7 * r.shift as i32;
-                let lo = r.start.max(vis_offset) - vis_offset;
-                let hi = (r.end + 1).min(vis_end) - vis_offset;
+                let lo = r.start.clamp(vis_offset, vis_end) - vis_offset;
+                let hi = (r.end.saturating_add(1).clamp(vis_offset, vis_end)) - vis_offset;
                 for k in lo..hi {
                     s[k] = v;
                 }
