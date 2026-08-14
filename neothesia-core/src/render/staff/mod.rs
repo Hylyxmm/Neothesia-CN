@@ -87,6 +87,16 @@ const COL_PLAYHEAD: [f32; 4] = [0.85, 0.85, 0.85, 0.9];
 const COL_CLEF_BLOCK_EDGE: [f32; 4] = [0.35, 0.35, 0.35, 1.0];
 const COL_LEDGER: [f32; 4] = [0.7, 0.7, 0.7, 1.0];
 const COL_STEM: [f32; 4] = [0.9, 0.9, 0.9, 1.0];
+/// Stem/beam colour for a note/group once it has crossed the playhead — matches the noteheads'
+/// played colour so stems, beams and heads grey out together.
+///
+/// Noteheads are glyphs rendered via glyphon in `ColorMode::Accurate`, which treats their colour
+/// (COL_GRAY = sRGB 140) correctly. Stems/beams are plain quads whose shader writes colour values
+/// straight to the sRGB surface, so wgpu interprets them as *linear* and converts back to sRGB on
+/// output. To land on the same perceived grey we must pass the linear equivalent of sRGB 140:
+/// srgb_to_linear(140/255) ≈ 0.262. (COL_STEM = 0.9 linear ↔ sRGB ~242, which is why the unplayed
+/// white noteheads ~245 already match.)
+const COL_STEM_PLAYED: [f32; 4] = [0.262, 0.262, 0.262, 1.0];
 
 const COL_WHITE: Color = Color::rgb(245, 245, 245);
 const COL_GRAY: Color = Color::rgb(140, 140, 140);
@@ -725,7 +735,12 @@ impl StaffRenderer {
         if i + 1 >= n {
             return None;
         }
-        let beat_end = ms + (((columns[i].t - ms) / quarter).floor() + 1.0) * quarter;
+        // Compute the end of the beat containing columns[i].t. A tiny epsilon is added BEFORE
+        // flooring so that a note whose (t-ms)/quarter is mathematically an integer (a note right
+        // on a beat boundary) isn't pushed to the previous beat by float error — that mis-placed
+        // boundary then hard-cut the beam and split a beat of 4 sixteenths into 1 + 3.
+        let beat_idx = ((columns[i].t - ms) / quarter + quarter * 0.01).floor();
+        let beat_end = ms + (beat_idx + 1.0) * quarter;
         let eps = quarter * 0.02; // absorb float error at the exact beat boundary
         if columns[i + 1].t >= beat_end - eps {
             return None;
@@ -883,7 +898,13 @@ impl StaffRenderer {
                 let top = y_hi - stem_len;
                 (top, y_lo - top, top)
             };
-            out.push(Cmd::Quad(quad(stem_x, quad_top, stem_w, quad_h, COL_STEM)));
+            out.push(Cmd::Quad(quad(
+                stem_x,
+                quad_top,
+                stem_w,
+                quad_h,
+                if color.r() < 200 { COL_STEM_PLAYED } else { COL_STEM },
+            )));
             if flags > 0 {
                 let ch = glyphs::cp::flag(flags, stem_down);
                 // The flag attaches at the stem's left edge (stem_x) and the stem end (flag_y);
@@ -1271,7 +1292,13 @@ impl StaffRenderer {
             let top = y_hi - GRACE_STEM_LEN;
             (top, y_lo - top)
         };
-        out.push(Cmd::Quad(quad(stem_x, top, stem_w, h, COL_STEM)));
+        out.push(Cmd::Quad(quad(
+            stem_x,
+            top,
+            stem_w,
+            h,
+            if col.color.r() < 200 { COL_STEM_PLAYED } else { COL_STEM },
+        )));
     }
 
     /// Draw a beamed group: `flags` parallel horizontal beams (8th = 1, 16th = 2, 32nd = 3)
@@ -1293,6 +1320,13 @@ impl StaffRenderer {
         let nh_half = LINE_SPACING * 0.5;
         let beam_thick = LINE_SPACING * 0.3;
         let beam_gap = LINE_SPACING * 0.5; // centre-to-centre between parallel beams
+        // A beamed group reads as one unit, so its stems/beam grey out as a whole — following the
+        // LAST note: only once the final notehead has crossed the playhead do the stems and beam
+        // switch to the played colour, matching the noteheads.
+        let played = cols
+            .last()
+            .is_some_and(|c| c.color.r() < 200); // COL_GRAY (140) vs COL_WHITE (245)
+        let stem_col = if played { COL_STEM_PLAYED } else { COL_STEM };
 
         let (mi, _) = self.measure_frac(cols[0].t);
         let quarter = self.measure_duration_sec(mi) * 0.25;
@@ -1353,7 +1387,7 @@ impl StaffRenderer {
             } else {
                 (beam_y, outer_y[k] - beam_y)
             };
-            out.push(Cmd::Quad(quad(stem_x, top, stem_w, h, COL_STEM)));
+            out.push(Cmd::Quad(quad(stem_x, top, stem_w, h, stem_col)));
         }
 
         // beams: cap the stems exactly — first stem's left edge to last stem's right edge
@@ -1371,7 +1405,7 @@ impl StaffRenderer {
             } else {
                 beam_y + b as f32 * beam_gap
             };
-            out.push(Cmd::Quad(quad(bx, y, bw, beam_thick, COL_STEM)));
+            out.push(Cmd::Quad(quad(bx, y, bw, beam_thick, stem_col)));
         }
     }
 
