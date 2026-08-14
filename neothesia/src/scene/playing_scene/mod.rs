@@ -313,11 +313,11 @@ impl Scene for PlayingScene {
     fn render<'pass>(&'pass mut self, rpass: &mut wgpu_jumpstart::RenderPass<'pass>) {
         self.quad_renderer_bg.render(rpass);
         self.waterfall.render(rpass);
-        if self.staff_view {
-            self.staff.render(rpass);
-        }
         if let Some(note_labels) = self.note_labels.as_mut() {
             note_labels.render(rpass);
+        }
+        if self.staff_view {
+            self.staff.render(rpass);
         }
         self.quad_renderer_fg.render(rpass);
         if let Some(glow) = &self.glow {
