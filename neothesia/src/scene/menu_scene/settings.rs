@@ -19,6 +19,65 @@ fn button() -> nuon::Button {
         .border_radius([5.0; 4])
 }
 
+/// Maximum audio gain mapped to the right end of the volume bar.
+const GAIN_MAX: f32 = 1.0;
+
+/// Volume-bar style slider: rounded track, filled portion and a knob. Clicking or
+/// dragging anywhere on the track sets the value; returns `Some(frac in 0..=1)` on the
+/// frames the user is interacting with it.
+fn volume_slider(
+    ui: &mut nuon::Ui,
+    id: impl Into<nuon::Id>,
+    x: f32,
+    y_center: f32,
+    w: f32,
+    frac: f32,
+) -> Option<f32> {
+    let track_h = 6.0;
+    let knob_d = 14.0;
+    let track_y = y_center - track_h / 2.0;
+    let frac = frac.clamp(0.0, 1.0);
+
+    // Register the hit area first so the grab priority belongs to the slider.
+    let event = nuon::click_area(id)
+        .pos(x, y_center - 15.0)
+        .size(w, 30.0)
+        .build(ui);
+
+    // Track
+    nuon::quad()
+        .pos(x, track_y)
+        .size(w, track_h)
+        .color([46, 42, 54, 255])
+        .border_radius([track_h / 2.0; 4])
+        .build(ui);
+
+    // Fill
+    if frac > 0.0 {
+        nuon::quad()
+            .pos(x, track_y)
+            .size(w * frac, track_h)
+            .color([122, 104, 168, 255])
+            .border_radius([track_h / 2.0; 4])
+            .build(ui);
+    }
+
+    // Knob
+    nuon::quad()
+        .pos(x + w * frac - knob_d / 2.0, y_center - knob_d / 2.0)
+        .size(knob_d, knob_d)
+        .color([220, 216, 228, 255])
+        .border_radius([knob_d / 2.0; 4])
+        .build(ui);
+
+    if event.is_pressed() || event.is_press_start() {
+        let cursor = ui.cursor_local();
+        Some(((cursor.x - x) / w).clamp(0.0, 1.0))
+    } else {
+        None
+    }
+}
+
 impl super::MenuScene {
     pub fn settings_page_ui(&mut self, ctx: &mut Context, ui: &mut nuon::Ui) {
         // Establish the selected output/input connection
@@ -359,14 +418,17 @@ impl super::MenuScene {
 
             spacer(ui);
 
-            self::update_audio_gain(
-                ctx,
-                nuon::settings_row_spin()
-                    .title("音频增益")
-                    .subtitle(ctx.config.audio_gain().to_string())
-                    .id("gain")
-                    .build(ui, rows),
-            );
+            let gain = ctx.config.audio_gain().clamp(0.0, GAIN_MAX);
+            nuon::settings_row()
+                .title("音频增益")
+                .subtitle(format!("{}%", (gain / GAIN_MAX * 100.0).round() as u32))
+                .body(|ui, row_w, row_h| {
+                    let w = 200.0;
+                    if let Some(f) = volume_slider(ui, "gain-slider", row_w - w, row_h / 2.0, w, gain / GAIN_MAX) {
+                        ctx.config.set_audio_gain((f * GAIN_MAX * 100.0).round() / 100.0);
+                    }
+                })
+                .build(ui, rows);
         } else if is_midi {
             spacer(ui);
 
@@ -693,21 +755,6 @@ impl super::MenuScene {
             }
         }
     }
-}
-
-pub fn update_audio_gain(ctx: &mut Context, kind: nuon::SettingsRowSpinResult) {
-    match kind {
-        nuon::SettingsRowSpinResult::Plus => {
-            ctx.config.set_audio_gain(ctx.config.audio_gain() + 0.1);
-        }
-        nuon::SettingsRowSpinResult::Minus => {
-            ctx.config.set_audio_gain(ctx.config.audio_gain() - 0.1);
-        }
-        nuon::SettingsRowSpinResult::Idle => {}
-    }
-
-    ctx.config
-        .set_audio_gain((ctx.config.audio_gain() * 10.0).round() / 10.0);
 }
 
 /// Waterfall flow speed: how fast note blocks scroll down. Independent of the playback
