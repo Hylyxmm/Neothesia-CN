@@ -455,8 +455,9 @@ impl super::MenuScene {
                     if let Some(f) =
                         volume_slider(ui, "gain-slider", row_w - w, row_h / 2.0, w, frac, true)
                     {
-                        let db = (GAIN_DB_MIN + f * (GAIN_DB_MAX - GAIN_DB_MIN) * 10.0).round()
-                            / 10.0;
+                        let db =
+                            ((GAIN_DB_MIN + f * (GAIN_DB_MAX - GAIN_DB_MIN)) * 10.0).round()
+                                / 10.0;
                         ctx.config.set_audio_gain(10f32.powf(db / 20.0));
                     }
                 })
