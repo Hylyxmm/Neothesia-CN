@@ -3,6 +3,7 @@ use std::path::PathBuf;
 mod model;
 
 pub use model::ColorSchemaV1;
+pub use model::FullscreenMode;
 use model::{
     AppearanceConfig, AppearanceConfigV1, DevicesConfig, DevicesConfigV1, History, HistoryV1,
     LayoutConfig, LayoutConfigV1, Model, PcKeyboardConfig, PcKeyboardConfigV1, PlaybackConfig,
@@ -290,6 +291,14 @@ impl Config {
 
     pub fn set_fullscreen(&mut self, fullscreen: bool) {
         self.window.fullscreen = fullscreen;
+    }
+
+    pub fn fullscreen_mode(&self) -> FullscreenMode {
+        self.window.fullscreen_mode
+    }
+
+    pub fn set_fullscreen_mode(&mut self, mode: FullscreenMode) {
+        self.window.fullscreen_mode = mode;
     }
 
     pub fn monitor(&self) -> Option<&String> {

@@ -91,6 +91,7 @@ impl Context {
         crate::utils::window::apply_window_settings(
             &self.window,
             self.config.fullscreen(),
+            self.config.fullscreen_mode(),
             self.config.monitor().map(|s| s.as_str()),
             self.config.resolution(),
         );

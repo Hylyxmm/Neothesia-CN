@@ -6,6 +6,7 @@ use crate::{
     utils::BoxFuture,
 };
 use nuon::TextJustify;
+use neothesia_core::config::FullscreenMode;
 use piano_layout::Key;
 
 use super::UiState;
@@ -65,13 +66,41 @@ impl super::MenuScene {
                     .build(ui, |ui, rows, spacer| {
                         if nuon::settings_row_toggler()
                             .title("全屏")
-                            .subtitle("在所选显示器上以所选分辨率全屏运行")
+                            .subtitle("在所选显示器上全屏运行")
                             .value(ctx.config.fullscreen())
                             .build(ui, rows)
                         {
                             ctx.config.set_fullscreen(!ctx.config.fullscreen());
                             ctx.apply_window_settings();
                         }
+
+                        spacer(ui);
+
+                        nuon::settings_row()
+                            .title("全屏模式")
+                            .subtitle("无边框不切换显示模式，避免黑屏闪烁；独占可自选分辨率")
+                            .body(|ui, row_w, row_h| {
+                                let w = 110.0;
+                                let h = 31.0;
+                                let borderless =
+                                    ctx.config.fullscreen_mode() == FullscreenMode::Borderless;
+                                if button()
+                                    .x(row_w - w)
+                                    .y(nuon::center_y(row_h, h))
+                                    .size(w, h)
+                                    .label(if borderless { "无边框" } else { "独占" })
+                                    .build(ui)
+                                {
+                                    ctx.config.set_fullscreen_mode(if borderless {
+                                        FullscreenMode::Exclusive
+                                    } else {
+                                        FullscreenMode::Borderless
+                                    });
+                                    // Switch immediately if currently fullscreen.
+                                    ctx.apply_window_settings();
+                                }
+                            })
+                            .build(ui, rows);
 
                         spacer(ui);
 
@@ -87,7 +116,7 @@ impl super::MenuScene {
 
                         nuon::settings_row()
                             .title("分辨率")
-                            .subtitle("全屏分辨率；窗口模式下为窗口大小")
+                            .subtitle("无边框全屏跟随桌面；窗口模式下为窗口大小")
                             .body(|ui, row_w, row_h| {
                                 self.settings_resolution_picker(ui, ctx, row_w, row_h)
                             })
