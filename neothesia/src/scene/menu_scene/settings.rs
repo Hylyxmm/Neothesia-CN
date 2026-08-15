@@ -323,7 +323,7 @@ impl super::MenuScene {
                         .build(ui)
                     {
                         self.futures
-                            .push(self::open_soundfont_picker(&mut self.state));
+                            .push(self::open_soundfont_picker(&mut self.state, ctx));
                     }
                 })
                 .build(ui, rows);
@@ -728,13 +728,17 @@ pub fn update_range_end(ctx: &mut Context, kind: nuon::SettingsRowSpinResult) {
     }
 }
 
-pub fn open_soundfont_picker(data: &mut UiState) -> BoxFuture<MsgFn> {
+pub fn open_soundfont_picker(data: &mut UiState, ctx: &mut Context) -> BoxFuture<MsgFn> {
     data.is_loading = true;
+    // Drop out of fullscreen for the native dialog, restore afterwards (same rationale
+    // as the MIDI file picker).
+    ctx.suspend_fullscreen();
     on_async(open_sondfont_picker_fut(), |res, data, ctx| {
         if let Some(font) = res {
             ctx.config.set_soundfont_path(Some(font.clone()));
         }
         data.is_loading = false;
+        ctx.restore_fullscreen();
     })
 }
 
