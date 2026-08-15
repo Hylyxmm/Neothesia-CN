@@ -21,6 +21,8 @@ pub struct Model {
     pub appearance: AppearanceConfig,
     #[serde(default)]
     pub pc_keyboard: PcKeyboardConfig,
+    #[serde(default)]
+    pub window: WindowConfig,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -218,6 +220,33 @@ impl Default for PcKeyboardConfig {
         Self::V1(PcKeyboardConfigV1 {
             octave_shift: default_octave_shift(),
         })
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Default)]
+pub struct WindowConfigV1 {
+    /// Run in exclusive fullscreen on the selected monitor.
+    #[serde(default)]
+    pub fullscreen: bool,
+
+    /// Preferred monitor, matched by `MonitorHandle::name()`; `None` = current monitor.
+    #[serde(default)]
+    pub monitor: Option<String>,
+
+    /// Preferred resolution (width, height) in physical pixels. Used as the exclusive
+    /// fullscreen video mode, or the windowed size when fullscreen is off.
+    #[serde(default)]
+    pub resolution: Option<(u32, u32)>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub enum WindowConfig {
+    V1(WindowConfigV1),
+}
+
+impl Default for WindowConfig {
+    fn default() -> Self {
+        Self::V1(WindowConfigV1::default())
     }
 }
 
