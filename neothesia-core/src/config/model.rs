@@ -137,6 +137,12 @@ pub struct DevicesConfigV1 {
 
     #[serde(default = "default_separate_channels")]
     pub separate_channels: bool,
+
+    /// Tracks set to manual play produce no app-side audio: their file events are not
+    /// forwarded and the user's MIDI input is not echoed to the output — a digital
+    /// piano sounds those notes itself.
+    #[serde(default)]
+    pub mute_human_tracks: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -150,6 +156,7 @@ impl Default for DevicesConfig {
             output: default_output(),
             input: None,
             separate_channels: default_separate_channels(),
+            mute_human_tracks: false,
         })
     }
 }

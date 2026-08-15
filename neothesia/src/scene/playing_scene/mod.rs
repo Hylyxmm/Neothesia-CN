@@ -101,6 +101,7 @@ impl PlayingScene {
             song,
             keyboard_layout.range.clone(),
             ctx.config.separate_channels(),
+            ctx.config.mute_human_tracks(),
         );
         waterfall.update(player.time_without_lead_in());
 
