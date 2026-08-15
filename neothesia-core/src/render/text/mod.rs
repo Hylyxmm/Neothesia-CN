@@ -153,7 +153,7 @@ impl TextRenderer {
         buffer.set_text(
             text,
             &glyphon::Attrs::new().family(glyphon::Family::SansSerif),
-            glyphon::Shaping::Basic,
+            glyphon::Shaping::Advanced,
             None,
         );
         buffer.shape_until_scroll(font_system, false);
@@ -183,7 +183,7 @@ impl TextRenderer {
         buffer.set_text(
             &text,
             &glyphon::Attrs::new().family(glyphon::Family::SansSerif),
-            glyphon::Shaping::Basic,
+            glyphon::Shaping::Advanced,
             None,
         );
         buffer.shape_until_scroll(font_system, false);
@@ -344,7 +344,10 @@ impl TextRenderer {
         let mut buffer =
             cosmic_text::Buffer::new(font_system, cosmic_text::Metrics::new(size, size));
         buffer.set_size(Some(f32::MAX), Some(f32::MAX));
-        buffer.set_text(text, &attrs, cosmic_text::Shaping::Basic, None);
+        // Advanced shaping is required: Basic does not fall back per-glyph, so bold CJK text
+        // (the embedded Noto CJK TTC only has Regular weight) picks a Latin font and renders
+        // Han characters as .notdef tofu boxes.
+        buffer.set_text(text, &attrs, cosmic_text::Shaping::Advanced, None);
         buffer.shape_until_scroll(font_system, false);
         buffer
     }
