@@ -140,12 +140,12 @@ impl Config {
         self.devices.separate_channels
     }
 
-    pub fn mute_human_tracks(&self) -> bool {
-        self.devices.mute_human_tracks
+    pub fn mute_user_input(&self) -> bool {
+        self.devices.mute_user_input
     }
 
-    pub fn set_mute_human_tracks(&mut self, mute_human_tracks: bool) {
-        self.devices.mute_human_tracks = mute_human_tracks;
+    pub fn set_mute_user_input(&mut self, mute_user_input: bool) {
+        self.devices.mute_user_input = mute_user_input;
     }
 
     pub fn vertical_guidelines(&self) -> bool {
