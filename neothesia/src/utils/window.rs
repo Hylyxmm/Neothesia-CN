@@ -98,8 +98,11 @@ pub fn list_resolutions(
     best
 }
 
-/// Pick the video mode matching the preferred resolution (highest refresh rate), or the
-/// monitor's largest mode when no preference is stored.
+/// Pick the video mode matching the preferred resolution (highest refresh rate). When no
+/// preference is stored, prefer the monitor's current desktop size — GPU upscaling modes
+/// (AMD VSR etc.) expose resolutions far above the panel's native one, and fullscreening
+/// at those downsamples badly. Falls back to the largest mode if the desktop size is not
+/// offered.
 fn pick_video_mode(
     monitor: &winit::monitor::MonitorHandle,
     resolution: Option<(u32, u32)>,
@@ -110,9 +113,22 @@ fn pick_video_mode(
             .into_iter()
             .filter(|m| m.size().width == w && m.size().height == h)
             .max_by_key(|m| m.refresh_rate_millihertz()),
-        None => modes
-            .into_iter()
-            .max_by_key(|m| (m.size().width * m.size().height, m.refresh_rate_millihertz())),
+        None => {
+            let desktop = monitor.size();
+            modes
+                .iter()
+                .filter(|m| {
+                    let s = m.size();
+                    s.width == desktop.width && s.height == desktop.height
+                })
+                .max_by_key(|m| m.refresh_rate_millihertz())
+                .cloned()
+                .or_else(|| {
+                    modes.into_iter().max_by_key(|m| {
+                        (m.size().width * m.size().height, m.refresh_rate_millihertz())
+                    })
+                })
+        }
     }
 }
 
@@ -203,8 +219,11 @@ impl WindowState {
                 self.logical_size = ps.to_logical(self.scale_factor);
             }
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
-                self.logical_size = self.physical_size.to_logical(self.scale_factor);
+                // Update the factor BEFORE converting, otherwise logical_size is computed
+                // with the stale factor and ends up off by the factor ratio — a too-large
+                // logical size then overflows scissor rects after monitor moves.
                 self.scale_factor = *scale_factor;
+                self.logical_size = self.physical_size.to_logical(self.scale_factor);
             }
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor_physical_position = *position;
