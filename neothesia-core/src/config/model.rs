@@ -230,11 +230,26 @@ impl Default for PcKeyboardConfig {
     }
 }
 
+#[derive(Serialize, Deserialize, Clone, Copy, Default, Debug, PartialEq, Eq)]
+pub enum FullscreenMode {
+    /// Borderless fullscreen: covers the monitor at its desktop resolution without a
+    /// display mode switch — no black flash when entering/leaving.
+    #[default]
+    Borderless,
+    /// Exclusive fullscreen: a real video-mode switch at the selected resolution; can
+    /// flash black during the switch but allows non-desktop resolutions.
+    Exclusive,
+}
+
 #[derive(Serialize, Deserialize, Clone, Default)]
 pub struct WindowConfigV1 {
-    /// Run in exclusive fullscreen on the selected monitor.
+    /// Run in fullscreen on the selected monitor.
     #[serde(default)]
     pub fullscreen: bool,
+
+    /// Which fullscreen flavor to use when `fullscreen` is on.
+    #[serde(default)]
+    pub fullscreen_mode: FullscreenMode,
 
     /// Preferred monitor, matched by `MonitorHandle::name()`; `None` = current monitor.
     #[serde(default)]

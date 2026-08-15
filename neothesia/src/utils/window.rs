@@ -132,14 +132,17 @@ fn pick_video_mode(
     }
 }
 
-/// Apply the persisted window settings: exclusive fullscreen (selected monitor +
-/// resolution) or windowed at the stored size. Safe to call repeatedly.
+/// Apply the persisted window settings: fullscreen (borderless or exclusive, selected
+/// monitor + resolution) or windowed at the stored size. Safe to call repeatedly.
 pub fn apply_window_settings(
     window: &winit::window::Window,
     fullscreen: bool,
+    mode: neothesia_core::config::FullscreenMode,
     monitor_name: Option<&str>,
     resolution: Option<(u32, u32)>,
 ) {
+    use neothesia_core::config::FullscreenMode;
+
     if !fullscreen {
         window.set_fullscreen(None);
         if let Some((w, h)) = resolution {
@@ -153,14 +156,19 @@ pub fn apply_window_settings(
         return;
     };
 
-    match pick_video_mode(&monitor, resolution) {
-        Some(mode) => {
-            window.set_fullscreen(Some(winit::window::Fullscreen::Exclusive(mode)));
-        }
-        None => {
-            // Stored resolution not offered by this monitor; fall back to borderless.
+    match mode {
+        FullscreenMode::Borderless => {
             window.set_fullscreen(Some(winit::window::Fullscreen::Borderless(Some(monitor))));
         }
+        FullscreenMode::Exclusive => match pick_video_mode(&monitor, resolution) {
+            Some(mode) => {
+                window.set_fullscreen(Some(winit::window::Fullscreen::Exclusive(mode)));
+            }
+            None => {
+                // Stored resolution not offered by this monitor; fall back to borderless.
+                window.set_fullscreen(Some(winit::window::Fullscreen::Borderless(Some(monitor))));
+            }
+        },
     }
 }
 
