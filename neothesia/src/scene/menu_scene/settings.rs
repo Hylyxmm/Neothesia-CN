@@ -417,12 +417,24 @@ impl super::MenuScene {
         ctx: &mut Context,
         ui: &mut nuon::Ui,
         rows: &dyn Fn(&mut nuon::Ui, nuon::SettingsRow<'_>),
-        _spacer: &dyn Fn(&mut nuon::Ui),
+        spacer: &dyn Fn(&mut nuon::Ui),
     ) {
         nuon::settings_row()
             .title("MIDI 输入")
             .body(|ui, row_w, row_h| self.settings_input_picker(ui, ctx, row_w, row_h))
             .build(ui, rows);
+
+        spacer(ui);
+
+        if nuon::settings_row_toggler()
+            .title("人工音轨静音")
+            .subtitle("人工模式的音轨不输出软件音源，由电钢琴发声")
+            .value(ctx.config.mute_human_tracks())
+            .build(ui, rows)
+        {
+            ctx.config
+                .set_mute_human_tracks(!ctx.config.mute_human_tracks());
+        }
     }
 }
 

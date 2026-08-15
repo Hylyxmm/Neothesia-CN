@@ -139,6 +139,14 @@ impl Config {
         self.devices.separate_channels
     }
 
+    pub fn mute_human_tracks(&self) -> bool {
+        self.devices.mute_human_tracks
+    }
+
+    pub fn set_mute_human_tracks(&mut self, mute_human_tracks: bool) {
+        self.devices.mute_human_tracks = mute_human_tracks;
+    }
+
     pub fn vertical_guidelines(&self) -> bool {
         self.appearance.vertical_guidelines
     }

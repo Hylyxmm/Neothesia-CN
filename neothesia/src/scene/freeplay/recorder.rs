@@ -150,6 +150,7 @@ impl Preview {
             song,
             keyboard.layout().range.clone(),
             ctx.config.separate_channels(),
+            ctx.config.mute_human_tracks(),
             Duration::ZERO,
         );
         player.pause();
