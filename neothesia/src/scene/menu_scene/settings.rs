@@ -19,12 +19,14 @@ fn button() -> nuon::Button {
         .border_radius([5.0; 4])
 }
 
-/// Maximum audio gain mapped to the right end of the volume bar.
-const GAIN_MAX: f32 = 1.0;
+/// Audio gain slider range in dB; 0 dB (slider center) is unity gain.
+const GAIN_DB_MIN: f32 = -18.0;
+const GAIN_DB_MAX: f32 = 18.0;
 
 /// Volume-bar style slider: rounded track, filled portion and a knob. Clicking or
 /// dragging anywhere on the track sets the value; returns `Some(frac in 0..=1)` on the
-/// frames the user is interacting with it.
+/// frames the user is interacting with it. `center_notch` draws a small tick at the
+/// middle of the track (useful when the center value is meaningful, e.g. 0 dB).
 fn volume_slider(
     ui: &mut nuon::Ui,
     id: impl Into<nuon::Id>,
@@ -32,6 +34,7 @@ fn volume_slider(
     y_center: f32,
     w: f32,
     frac: f32,
+    center_notch: bool,
 ) -> Option<f32> {
     let track_h = 6.0;
     let knob_d = 14.0;
@@ -52,13 +55,30 @@ fn volume_slider(
         .border_radius([track_h / 2.0; 4])
         .build(ui);
 
-    // Fill
-    if frac > 0.0 {
+    // Fill from the center to the knob: the slider is a dB control where the middle
+    // is unity — a negative value shows a short bar left of center, a positive one a
+    // longer bar right of it.
+    let center = 0.5_f32;
+    let (fill_x, fill_w) = if frac < center {
+        (x + w * frac, w * (center - frac))
+    } else {
+        (x + w * center, w * (frac - center))
+    };
+    if fill_w > 0.0 {
         nuon::quad()
-            .pos(x, track_y)
-            .size(w * frac, track_h)
+            .pos(fill_x, track_y)
+            .size(fill_w, track_h)
             .color([122, 104, 168, 255])
             .border_radius([track_h / 2.0; 4])
+            .build(ui);
+    }
+
+    // Center notch
+    if center_notch {
+        nuon::quad()
+            .pos(x + w * center - 1.0, y_center - track_h / 2.0 - 3.0)
+            .size(2.0, track_h + 6.0)
+            .color([90, 84, 104, 255])
             .build(ui);
     }
 
@@ -418,14 +438,26 @@ impl super::MenuScene {
 
             spacer(ui);
 
-            let gain = ctx.config.audio_gain().clamp(0.0, GAIN_MAX);
+            // Slider maps [-18 dB .. +18 dB] to the synth's linear gain (10^(dB/20)),
+            // 0 dB at the center. Stored gain values outside the range just clamp.
+            let db = (20.0 * ctx.config.audio_gain().log10()).clamp(GAIN_DB_MIN, GAIN_DB_MAX);
+            let label = if db.abs() < 0.05 {
+                "0.0 dB".to_string()
+            } else {
+                format!("{db:+.1} dB")
+            };
             nuon::settings_row()
                 .title("音频增益")
-                .subtitle(format!("{}%", (gain / GAIN_MAX * 100.0).round() as u32))
+                .subtitle(label)
                 .body(|ui, row_w, row_h| {
                     let w = 200.0;
-                    if let Some(f) = volume_slider(ui, "gain-slider", row_w - w, row_h / 2.0, w, gain / GAIN_MAX) {
-                        ctx.config.set_audio_gain((f * GAIN_MAX * 100.0).round() / 100.0);
+                    let frac = (db - GAIN_DB_MIN) / (GAIN_DB_MAX - GAIN_DB_MIN);
+                    if let Some(f) =
+                        volume_slider(ui, "gain-slider", row_w - w, row_h / 2.0, w, frac, true)
+                    {
+                        let db = (GAIN_DB_MIN + f * (GAIN_DB_MAX - GAIN_DB_MIN) * 10.0).round()
+                            / 10.0;
+                        ctx.config.set_audio_gain(10f32.powf(db / 20.0));
                     }
                 })
                 .build(ui, rows);
