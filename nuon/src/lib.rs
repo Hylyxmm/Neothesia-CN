@@ -325,6 +325,15 @@ impl Ui {
         self.pointer_pos = pointer_pos;
     }
 
+    /// Cursor position expressed in the current (innermost) translation frame.
+    pub fn cursor_local(&self) -> Point {
+        let offset = self.translation_stack.offset();
+        Point::new(
+            self.pointer_pos.x - offset.x,
+            self.pointer_pos.y - offset.y,
+        )
+    }
+
     pub fn mouse_down(&mut self) {
         self.mouse_pressed = true;
         self.mouse_down = true;
