@@ -95,4 +95,16 @@ impl Context {
             self.config.resolution(),
         );
     }
+
+    /// Temporarily leave fullscreen. Exclusive fullscreen sits above every other window,
+    /// which hides native child dialogs (file pickers) on that monitor; drop out while
+    /// such a dialog is open and call [`Self::restore_fullscreen`] afterwards.
+    pub fn suspend_fullscreen(&self) {
+        self.window.set_fullscreen(None);
+    }
+
+    /// Re-apply the persisted window settings (restores fullscreen if it is enabled).
+    pub fn restore_fullscreen(&self) {
+        self.apply_window_settings();
+    }
 }
