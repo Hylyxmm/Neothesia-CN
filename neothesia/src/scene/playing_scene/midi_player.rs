@@ -16,8 +16,9 @@ pub struct MidiPlayer {
     song: Song,
     play_along: PlayAlong,
     separate_channels: bool,
-    /// Manual-play tracks stay silent on the app side (the digital piano sounds them).
-    mute_human_tracks: bool,
+    /// User MIDI input is judged only — never echoed to the audio output (the digital
+    /// piano sounds the played notes itself). Applies to all input, any track.
+    mute_user_input: bool,
 }
 
 impl MidiPlayer {
@@ -26,14 +27,14 @@ impl MidiPlayer {
         song: Song,
         user_keyboard_range: piano_layout::KeyboardRange,
         separate_channels: bool,
-        mute_human_tracks: bool,
+        mute_user_input: bool,
     ) -> Self {
         Self::new_with_lead_in(
             output,
             song,
             user_keyboard_range,
             separate_channels,
-            mute_human_tracks,
+            mute_user_input,
             Duration::from_secs(3),
         )
     }
@@ -43,7 +44,7 @@ impl MidiPlayer {
         song: Song,
         user_keyboard_range: piano_layout::KeyboardRange,
         separate_channels: bool,
-        mute_human_tracks: bool,
+        mute_user_input: bool,
         lead_in: Duration,
     ) -> Self {
         let mut player = Self {
@@ -52,7 +53,7 @@ impl MidiPlayer {
             play_along: PlayAlong::new(user_keyboard_range),
             song,
             separate_channels,
-            mute_human_tracks,
+            mute_user_input,
         };
         // Let's reset programs,
         // for timestamp 0 most likely all programs will be 0, so this should clean any leftovers
@@ -94,10 +95,8 @@ impl MidiPlayer {
 
                     // In Human mode note events from the file are targets for the player,
                     // not notes to be played by the synthesizer. Keep forwarding controller
-                    // and other non-note events so the track still sounds as intended —
-                    // unless manual tracks are muted entirely, in which case the digital
-                    // piano owns that track's sound and nothing is sent.
-                    if !self.mute_human_tracks && should_forward_human_event(&event.message) {
+                    // and other non-note events so the track still sounds as intended.
+                    if should_forward_human_event(&event.message) {
                         self.output.midi_event(u4::new(channel), event.message);
                     }
                 }
@@ -222,9 +221,9 @@ impl MidiPlayer {
 
     pub fn user_midi_event(&mut self, channel: u8, message: &MidiMessage) {
         // Echo the user's keys to the output so they are audible through the synth —
-        // skipped when manual tracks are muted, since the digital piano already sounds
-        // them locally and the echo would double every note.
-        if !self.mute_human_tracks {
+        // skipped entirely when user input is muted: it is only used for play-along
+        // judgment, and the digital piano already sounds the notes locally.
+        if !self.mute_user_input {
             self.output.midi_event(u4::new(channel), *message);
         }
         self.play_along.midi_event(MidiEventSource::User, message);
