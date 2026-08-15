@@ -35,7 +35,9 @@ impl MidiPlayer {
             user_keyboard_range,
             separate_channels,
             mute_user_input,
-            Duration::from_secs(3),
+            // Lead-in: idle time before the first notes sound, giving them room to scroll
+            // into view. 1.5 s keeps the approach readable even at high flow speeds.
+            Duration::from_millis(1500),
         )
     }
 
