@@ -85,4 +85,14 @@ impl Context {
         );
         self.transform.update(&self.gpu.queue);
     }
+
+    /// Apply the persisted fullscreen/monitor/resolution settings to the window.
+    pub fn apply_window_settings(&self) {
+        crate::utils::window::apply_window_settings(
+            &self.window,
+            self.config.fullscreen(),
+            self.config.monitor().map(|s| s.as_str()),
+            self.config.resolution(),
+        );
+    }
 }

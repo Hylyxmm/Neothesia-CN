@@ -6,7 +6,8 @@ pub use model::ColorSchemaV1;
 use model::{
     AppearanceConfig, AppearanceConfigV1, DevicesConfig, DevicesConfigV1, History, HistoryV1,
     LayoutConfig, LayoutConfigV1, Model, PcKeyboardConfig, PcKeyboardConfigV1, PlaybackConfig,
-    PlaybackConfigV1, SynthConfig, SynthConfigV1, WaterfallConfig, WaterfallConfigV1,
+    PlaybackConfigV1, SynthConfig, SynthConfigV1, WaterfallConfig, WaterfallConfigV1, WindowConfig,
+    WindowConfigV1,
 };
 
 fn ron_options() -> ron::Options {
@@ -45,6 +46,7 @@ impl Model {
             keyboard_layout,
             appearance,
             pc_keyboard,
+            window,
         } = config;
 
         Self {
@@ -56,6 +58,7 @@ impl Model {
             devices: DevicesConfig::V1(devices),
             appearance: AppearanceConfig::V1(appearance),
             pc_keyboard: PcKeyboardConfig::V1(pc_keyboard),
+            window: WindowConfig::V1(window),
         }
     }
 
@@ -85,6 +88,9 @@ impl Model {
             pc_keyboard: match self.pc_keyboard {
                 PcKeyboardConfig::V1(v) => v,
             },
+            window: match self.window {
+                WindowConfig::V1(v) => v,
+            },
         }
     }
 }
@@ -99,6 +105,7 @@ pub struct Config {
     history: HistoryV1,
     keyboard_layout: LayoutConfigV1,
     pc_keyboard: PcKeyboardConfigV1,
+    window: WindowConfigV1,
 }
 
 impl Default for Config {
@@ -267,6 +274,30 @@ impl Config {
 
     pub fn set_speed_multiplier(&mut self, speed_multiplier: f32) {
         self.playback.speed_multiplier = speed_multiplier.max(0.0);
+    }
+
+    pub fn fullscreen(&self) -> bool {
+        self.window.fullscreen
+    }
+
+    pub fn set_fullscreen(&mut self, fullscreen: bool) {
+        self.window.fullscreen = fullscreen;
+    }
+
+    pub fn monitor(&self) -> Option<&String> {
+        self.window.monitor.as_ref()
+    }
+
+    pub fn set_monitor(&mut self, monitor: Option<String>) {
+        self.window.monitor = monitor;
+    }
+
+    pub fn resolution(&self) -> Option<(u32, u32)> {
+        self.window.resolution
+    }
+
+    pub fn set_resolution(&mut self, resolution: Option<(u32, u32)>) {
+        self.window.resolution = resolution;
     }
 
     pub fn pc_keyboard_octave(&self) -> u8 {

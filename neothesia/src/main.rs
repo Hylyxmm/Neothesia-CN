@@ -95,17 +95,14 @@ impl Neothesia {
                 if event.key_released(Key::Named(NamedKey::F11))
                     || (event.key_pressed(Key::Character("f")) && modifiers.control_key())
                 {
+                    // Keep F11 and the settings-page toggle on the same code path so the
+                    // persisted state never disagrees with the actual window mode.
                     if self.context.window.fullscreen().is_some() {
+                        self.context.config.set_fullscreen(false);
                         self.context.window.set_fullscreen(None);
                     } else {
-                        let monitor = self.context.window.current_monitor();
-                        if let Some(monitor) = monitor {
-                            let f = winit::window::Fullscreen::Borderless(Some(monitor));
-                            self.context.window.set_fullscreen(Some(f));
-                        } else {
-                            let f = winit::window::Fullscreen::Borderless(None);
-                            self.context.window.set_fullscreen(Some(f));
-                        }
+                        self.context.config.set_fullscreen(true);
+                        self.context.apply_window_settings();
                     }
                     return;
                 }
@@ -295,6 +292,9 @@ impl ApplicationHandler<NeothesiaEvent> for NeothesiaBootstrap {
         .unwrap();
 
         let ctx = Context::new(window, window_state, self.1.clone(), gpu);
+
+        // Restore fullscreen/monitor/resolution persisted from the previous session.
+        ctx.apply_window_settings();
 
         let app = Neothesia::new(ctx, surface);
         self.0 = Some(app);

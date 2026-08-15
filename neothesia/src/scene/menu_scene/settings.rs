@@ -60,6 +60,40 @@ impl super::MenuScene {
                     .add_to_current(ui);
                 nuon::translate().y(margin_top).add_to_current(ui);
 
+                nuon::settings_section("显示")
+                    .width(body_w)
+                    .build(ui, |ui, rows, spacer| {
+                        if nuon::settings_row_toggler()
+                            .title("全屏")
+                            .subtitle("在所选显示器上以所选分辨率全屏运行")
+                            .value(ctx.config.fullscreen())
+                            .build(ui, rows)
+                        {
+                            ctx.config.set_fullscreen(!ctx.config.fullscreen());
+                            ctx.apply_window_settings();
+                        }
+
+                        spacer(ui);
+
+                        nuon::settings_row()
+                            .title("显示器")
+                            .subtitle("全屏时使用的屏幕")
+                            .body(|ui, row_w, row_h| {
+                                self.settings_monitor_picker(ui, ctx, row_w, row_h)
+                            })
+                            .build(ui, rows);
+
+                        spacer(ui);
+
+                        nuon::settings_row()
+                            .title("分辨率")
+                            .subtitle("全屏分辨率；窗口模式下为窗口大小")
+                            .body(|ui, row_w, row_h| {
+                                self.settings_resolution_picker(ui, ctx, row_w, row_h)
+                            })
+                            .build(ui, rows);
+                    });
+
                 nuon::settings_section("音频输出")
                     .width(body_w)
                     .build(ui, |ui, rows, spacer| {
@@ -378,6 +412,134 @@ impl super::MenuScene {
             .title("MIDI 输入")
             .body(|ui, row_w, row_h| self.settings_input_picker(ui, ctx, row_w, row_h))
             .build(ui, rows);
+    }
+}
+
+impl super::MenuScene {
+    fn settings_monitor_picker(
+        &mut self,
+        ui: &mut nuon::Ui,
+        ctx: &mut Context,
+        row_w: f32,
+        row_h: f32,
+    ) {
+        let btn_w = 320.0;
+        let btn_h = 31.0;
+
+        let btn_x = row_w - btn_w;
+        let btn_y = nuon::center_y(row_h, btn_h);
+
+        let monitors = crate::utils::window::list_monitors(&ctx.window);
+        let current_label = ctx
+            .config
+            .monitor()
+            .and_then(|name| monitors.iter().find(|m| m.name == *name))
+            .map(|m| m.label.clone())
+            .unwrap_or_else(|| "跟随当前显示器".to_string());
+
+        if button()
+            .pos(btn_x, btn_y)
+            .size(btn_w, btn_h)
+            .id("select_monitor")
+            .label(current_label)
+            .text_justify(TextJustify::Left)
+            .build(ui)
+        {
+            self.popup.toggle(Popup::MonitorSelector);
+        }
+
+        nuon::label()
+            .icon(icons::caret_down())
+            .pos(btn_x, btn_y)
+            .size(btn_w, btn_h)
+            .text_justify(TextJustify::Right)
+            .build(ui);
+
+        if self.popup == Popup::MonitorSelector {
+            nuon::layer().overlay(true).build(ui, |ui| {
+                nuon::translate()
+                    .x(btn_x)
+                    .y(btn_y + btn_h)
+                    .add_to_current(ui);
+
+                let labels: Vec<String> = monitors.iter().map(|m| m.label.clone()).collect();
+
+                if let Some(selected) =
+                    nuon::combo_list(ui, "select_monitor_", (btn_w, btn_h), &labels)
+                {
+                    if let Some(m) = monitors.iter().find(|m| &m.label == selected) {
+                        ctx.config.set_monitor(Some(m.name.clone()));
+                        // Re-apply so an active fullscreen switches to the new monitor.
+                        ctx.apply_window_settings();
+                    }
+                    self.popup.close();
+                }
+            });
+        }
+    }
+
+    fn settings_resolution_picker(
+        &mut self,
+        ui: &mut nuon::Ui,
+        ctx: &mut Context,
+        row_w: f32,
+        row_h: f32,
+    ) {
+        let btn_w = 320.0;
+        let btn_h = 31.0;
+
+        let btn_x = row_w - btn_w;
+        let btn_y = nuon::center_y(row_h, btn_h);
+
+        let modes = crate::utils::window::list_resolutions(
+            &ctx.window,
+            ctx.config.monitor().map(|s| s.as_str()),
+        );
+        let current_label = ctx
+            .config
+            .resolution()
+            .and_then(|r| modes.iter().find(|m| m.size == r).map(|m| m.label()))
+            .unwrap_or_else(|| "跟随显示器".to_string());
+
+        if button()
+            .pos(btn_x, btn_y)
+            .size(btn_w, btn_h)
+            .id("select_resolution")
+            .label(current_label)
+            .text_justify(TextJustify::Left)
+            .build(ui)
+        {
+            self.popup.toggle(Popup::ResolutionSelector);
+        }
+
+        nuon::label()
+            .icon(icons::caret_down())
+            .pos(btn_x, btn_y)
+            .size(btn_w, btn_h)
+            .text_justify(TextJustify::Right)
+            .build(ui);
+
+        if self.popup == Popup::ResolutionSelector {
+            nuon::layer().overlay(true).build(ui, |ui| {
+                nuon::translate()
+                    .x(btn_x)
+                    .y(btn_y + btn_h)
+                    .add_to_current(ui);
+
+                let labels: Vec<String> = modes.iter().map(|m| m.label()).collect();
+
+                if let Some(selected) =
+                    nuon::combo_list(ui, "select_resolution_", (btn_w, btn_h), &labels)
+                {
+                    if let Some(m) = modes.iter().find(|m| &m.label() == selected) {
+                        ctx.config.set_resolution(Some(m.size));
+                        // Switches the exclusive-fullscreen mode, or the windowed size.
+                        ctx.apply_window_settings();
+                    }
+                    self.popup.close();
+                }
+            });
+        }
     }
 }
 

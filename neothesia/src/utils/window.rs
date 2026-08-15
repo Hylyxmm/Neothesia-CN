@@ -9,6 +9,145 @@ use winit::{
     event::WindowEvent,
 };
 
+/// A monitor as presented in the settings UI: stable `name` (config key) plus a
+/// human-readable `label` (shown in the picker button and combo list).
+pub struct MonitorEntry {
+    pub name: String,
+    pub label: String,
+}
+
+/// A resolution as presented in the settings UI, deduped by size with the highest
+/// refresh rate kept.
+pub struct ResolutionEntry {
+    pub size: (u32, u32),
+    pub refresh_rate_millihertz: u32,
+}
+
+impl ResolutionEntry {
+    pub fn label(&self) -> String {
+        if self.refresh_rate_millihertz > 0 {
+            format!(
+                "{} × {}（{} Hz）",
+                self.size.0,
+                self.size.1,
+                self.refresh_rate_millihertz / 1000
+            )
+        } else {
+            format!("{} × {}", self.size.0, self.size.1)
+        }
+    }
+}
+
+fn selected_monitor(
+    window: &winit::window::Window,
+    monitor_name: Option<&str>,
+) -> Option<winit::monitor::MonitorHandle> {
+    let monitors: Vec<_> = window.available_monitors().collect();
+    monitor_name
+        .and_then(|name| monitors.iter().find(|m| m.name().as_deref() == Some(name)))
+        .cloned()
+        .or_else(|| window.current_monitor())
+        .or_else(|| window.primary_monitor())
+        .or_else(|| monitors.into_iter().next())
+}
+
+/// List all monitors for the picker UI.
+pub fn list_monitors(window: &winit::window::Window) -> Vec<MonitorEntry> {
+    window
+        .available_monitors()
+        .enumerate()
+        .map(|(i, m)| {
+            let name = m.name().unwrap_or_else(|| format!("monitor-{i}"));
+            let size = m.size();
+            let label = format!("{}. {}（{}×{}）", i + 1, name, size.width, size.height);
+            MonitorEntry { name, label }
+        })
+        .collect()
+}
+
+/// List the resolutions the given monitor supports, deduped by size (highest refresh
+/// rate kept), sorted from largest to smallest.
+pub fn list_resolutions(
+    window: &winit::window::Window,
+    monitor_name: Option<&str>,
+) -> Vec<ResolutionEntry> {
+    let Some(monitor) = selected_monitor(window, monitor_name) else {
+        return Vec::new();
+    };
+
+    let mut best: Vec<ResolutionEntry> = Vec::new();
+    for mode in monitor.video_modes() {
+        let size = (mode.size().width, mode.size().height);
+        match best.iter_mut().find(|e| e.size == size) {
+            Some(e) => {
+                if mode.refresh_rate_millihertz() > e.refresh_rate_millihertz {
+                    e.refresh_rate_millihertz = mode.refresh_rate_millihertz();
+                }
+            }
+            None => best.push(ResolutionEntry {
+                size,
+                refresh_rate_millihertz: mode.refresh_rate_millihertz(),
+            }),
+        }
+    }
+
+    best.sort_by(|a, b| (b.size.0 * b.size.1, b.refresh_rate_millihertz).cmp(&(
+        a.size.0 * a.size.1,
+        a.refresh_rate_millihertz,
+    )));
+    best
+}
+
+/// Pick the video mode matching the preferred resolution (highest refresh rate), or the
+/// monitor's largest mode when no preference is stored.
+fn pick_video_mode(
+    monitor: &winit::monitor::MonitorHandle,
+    resolution: Option<(u32, u32)>,
+) -> Option<winit::monitor::VideoModeHandle> {
+    let modes: Vec<_> = monitor.video_modes().collect();
+    match resolution {
+        Some((w, h)) => modes
+            .into_iter()
+            .filter(|m| m.size().width == w && m.size().height == h)
+            .max_by_key(|m| m.refresh_rate_millihertz()),
+        None => modes
+            .into_iter()
+            .max_by_key(|m| (m.size().width * m.size().height, m.refresh_rate_millihertz())),
+    }
+}
+
+/// Apply the persisted window settings: exclusive fullscreen (selected monitor +
+/// resolution) or windowed at the stored size. Safe to call repeatedly.
+pub fn apply_window_settings(
+    window: &winit::window::Window,
+    fullscreen: bool,
+    monitor_name: Option<&str>,
+    resolution: Option<(u32, u32)>,
+) {
+    if !fullscreen {
+        window.set_fullscreen(None);
+        if let Some((w, h)) = resolution {
+            let _ = window.request_inner_size(PhysicalSize::new(w, h));
+        }
+        return;
+    }
+
+    let Some(monitor) = selected_monitor(window, monitor_name) else {
+        window.set_fullscreen(Some(winit::window::Fullscreen::Borderless(None)));
+        return;
+    };
+
+    match pick_video_mode(&monitor, resolution) {
+        Some(mode) => {
+            window.set_fullscreen(Some(winit::window::Fullscreen::Exclusive(mode)));
+        }
+        None => {
+            // Stored resolution not offered by this monitor; fall back to borderless.
+            window.set_fullscreen(Some(winit::window::Fullscreen::Borderless(Some(monitor))));
+        }
+    }
+}
+
 pub struct WindowState {
     pub physical_size: PhysicalSize<u32>,
     pub logical_size: LogicalSize<f32>,

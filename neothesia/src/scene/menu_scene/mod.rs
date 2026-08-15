@@ -47,6 +47,8 @@ enum Popup {
     None,
     OutputSelector,
     InputSelector,
+    MonitorSelector,
+    ResolutionSelector,
 }
 
 impl Popup {
