@@ -162,6 +162,17 @@ impl super::MenuScene {
                 nuon::settings_section("渲染")
                     .width(body_w)
                     .build(ui, |ui, rows, spacer| {
+                        self::update_flow_speed(
+                            ctx,
+                            nuon::settings_row_spin()
+                                .title("瀑布流速")
+                                .subtitle(ctx.config.animation_speed().round().to_string())
+                                .id("flow-speed")
+                                .build(ui, rows),
+                        );
+
+                        spacer(ui);
+
                         if nuon::settings_row_toggler()
                             .title("垂直辅助线")
                             .subtitle("显示八度标记")
@@ -657,6 +668,32 @@ pub fn update_audio_gain(ctx: &mut Context, kind: nuon::SettingsRowSpinResult) {
 
     ctx.config
         .set_audio_gain((ctx.config.audio_gain() * 10.0).round() / 10.0);
+}
+
+/// Waterfall flow speed: how fast note blocks scroll down. Independent of the playback
+/// speed multiplier — a higher speed stretches each block (more pixels per second of
+/// note duration) so fewer blocks fit on screen; the song tempo is untouched. During
+/// playback the same value is live-adjustable with PageUp/PageDown.
+pub fn update_flow_speed(ctx: &mut Context, kind: nuon::SettingsRowSpinResult) {
+    // Step of 100 px/s matches the PageUp/PageDown increment; 0.0 is rejected by the
+    // config (it flips the sign instead), so jump over it, and keep a positive floor.
+    const STEP: f32 = 100.0;
+    match kind {
+        nuon::SettingsRowSpinResult::Plus => {
+            let mut v = ctx.config.animation_speed() + STEP;
+            if v == 0.0 {
+                v = STEP;
+            }
+            ctx.config.set_animation_speed(v.min(3000.0));
+        }
+        nuon::SettingsRowSpinResult::Minus => {
+            let v = ctx.config.animation_speed() - STEP;
+            if v >= 50.0 {
+                ctx.config.set_animation_speed(v);
+            }
+        }
+        nuon::SettingsRowSpinResult::Idle => {}
+    }
 }
 
 pub fn update_range_start(ctx: &mut Context, kind: nuon::SettingsRowSpinResult) {
