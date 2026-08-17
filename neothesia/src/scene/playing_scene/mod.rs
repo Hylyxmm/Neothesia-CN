@@ -19,6 +19,9 @@ use crate::{
 mod keyboard;
 pub use keyboard::Keyboard;
 
+mod key_light_strip;
+use key_light_strip::KeyLightStrip;
+
 pub(crate) mod midi_player;
 use midi_player::MidiPlayer;
 
@@ -30,6 +33,11 @@ use toast_manager::ToastManager;
 
 mod animation;
 mod top_bar;
+
+/// Distance (logical px) kept between the waterfall's judging line and the screen bottom when the
+/// keyboard is hidden: the two-row key-light strip occupies this much, and note blocks reach
+/// their judging moment exactly at the strip's top instead of being drawn over it.
+const BOTTOM_MARGIN: f32 = key_light_strip::STRIP_TOTAL_H;
 
 pub struct PlayingScene {
     keyboard: Keyboard,
@@ -48,6 +56,8 @@ pub struct PlayingScene {
     toast_manager: ToastManager,
     staff: StaffRenderer,
     staff_view: bool,
+    hide_keyboard: bool,
+    key_light_strip: KeyLightStrip,
 
     nuon: nuon::Ui,
     mouse_to_midi_state: MouseToMidiEventState,
@@ -123,7 +133,7 @@ impl PlayingScene {
             ctx.text_renderer_factory.new_renderer(),
         );
 
-        Self {
+        let mut scene = Self {
             keyboard,
             guidelines,
             note_labels,
@@ -139,12 +149,47 @@ impl PlayingScene {
             toast_manager: ToastManager::default(),
             staff,
             staff_view: ctx.config.staff_view(),
+            hide_keyboard: ctx.config.hide_keyboard(),
+            key_light_strip: KeyLightStrip::new(&ctx.gpu, &ctx.transform),
 
             nuon: nuon::Ui::new(),
             mouse_to_midi_state: MouseToMidiEventState::default(),
             deduced_chord_name: String::new(),
 
             top_bar: TopBar::new(),
+        };
+        scene.apply_waterfall_anchor(ctx);
+        scene
+    }
+
+    /// The y (logical px) of the waterfall's bottom anchor / judging line: the keyboard's top edge,
+    /// or slightly above the screen bottom when the keyboard is hidden, so a note block reaches
+    /// its judging moment with its bottom edge fully on-screen instead of being clipped by the
+    /// screen edge.
+    fn bottom_y(&self, ctx: &Context) -> f32 {
+        if self.hide_keyboard {
+            ctx.window_state.logical_size.height - BOTTOM_MARGIN
+        } else {
+            self.keyboard.pos().y
+        }
+    }
+
+    /// Push the current hide/show state to everything anchored to the waterfall's bottom. The fall
+    /// speed is intentionally NOT compensated: with the keyboard hidden the waterfall simply gains
+    /// the bottom 0.2·H of screen, notes appear 25% earlier (more lead time) and note heights are
+    /// unchanged — scaling the speed instead stretched note blocks past the top of the screen.
+    fn apply_waterfall_anchor(&mut self, ctx: &Context) {
+        let scale = ctx.window_state.scale_factor as f32;
+        let pad = if self.hide_keyboard {
+            BOTTOM_MARGIN * scale
+        } else {
+            ctx.window_state.physical_size.height as f32 / 5.0
+        };
+        self.waterfall.set_bottom_pad(pad);
+        let pos = (0.0, self.bottom_y(ctx)).into();
+        self.guidelines.set_pos(pos);
+        if let Some(note_labels) = self.note_labels.as_mut() {
+            note_labels.set_pos(pos);
         }
     }
 
@@ -214,10 +259,9 @@ impl PlayingScene {
         self.keyboard.resize(ctx);
 
         self.guidelines.set_layout(self.keyboard.layout().clone());
-        self.guidelines.set_pos(*self.keyboard.pos());
-        if let Some(note_labels) = self.note_labels.as_mut() {
-            note_labels.set_pos(*self.keyboard.pos());
-        }
+        // Re-apply bottom anchor (pad + speed + guidelines/note-labels pos): the keyboard moved
+        // with the new size, or the screen bottom is the anchor when hidden.
+        self.apply_waterfall_anchor(ctx);
 
         self.waterfall
             .resize(&ctx.config, self.keyboard.layout().clone());
@@ -231,6 +275,11 @@ impl Scene for PlayingScene {
         self.quad_renderer_bg.clear();
         self.quad_renderer_fg.clear();
         self.staff_view = ctx.config.staff_view();
+        let hide_keyboard = ctx.config.hide_keyboard();
+        if hide_keyboard != self.hide_keyboard {
+            self.hide_keyboard = hide_keyboard;
+            self.apply_waterfall_anchor(ctx);
+        }
 
         self.rewind_controller.update(&mut self.player, ctx, delta);
         self.toast_manager.update(&mut self.text_renderer);
@@ -252,8 +301,22 @@ impl Scene for PlayingScene {
             time,
             ctx.window_state.logical_size,
         );
-        self.keyboard
-            .update(&mut self.quad_renderer_fg, &mut self.text_renderer);
+        if !self.hide_keyboard {
+            self.keyboard
+                .update(&mut self.quad_renderer_fg, &mut self.text_renderer);
+        } else {
+            // Bottom indicator strip: mirrors the (hidden) key layout and lights up on input and
+            // file playback.
+            self.key_light_strip.update(
+                delta,
+                self.keyboard.key_states(),
+                self.keyboard.layout(),
+            );
+            self.key_light_strip.prepare(
+                ctx.window_state.logical_size.height,
+                self.keyboard.layout(),
+            );
+        }
         self.update_chord_identifier(ctx.config.chord_identifier());
         if let Some(note_labels) = self.note_labels.as_mut() {
             note_labels.update(
@@ -265,7 +328,9 @@ impl Scene for PlayingScene {
             );
         }
 
-        self.update_glow(delta);
+        if !self.hide_keyboard {
+            self.update_glow(delta);
+        }
 
         TopBar::update(self, ctx);
 
@@ -273,7 +338,7 @@ impl Scene for PlayingScene {
             nuon::label()
                 .text(&self.deduced_chord_name)
                 .font_size(25.0)
-                .y(self.keyboard.pos().y - 35.0)
+                .y(self.bottom_y(ctx) - 35.0)
                 .height(25.0)
                 .width(ctx.window_state.logical_size.width)
                 .build(&mut self.nuon);
@@ -321,6 +386,9 @@ impl Scene for PlayingScene {
             self.staff.render(rpass);
         }
         self.quad_renderer_fg.render(rpass);
+        if self.hide_keyboard {
+            self.key_light_strip.render(rpass);
+        }
         if let Some(glow) = &self.glow {
             glow.render(rpass);
         }
@@ -349,12 +417,15 @@ impl Scene for PlayingScene {
 
         handle_settings_input(ctx, &mut self.toast_manager, &mut self.waterfall, event);
         super::handle_pc_keyboard_to_midi_event(ctx, event);
-        super::handle_mouse_to_midi_event(
-            &mut self.keyboard,
-            &mut self.mouse_to_midi_state,
-            ctx,
-            event,
-        );
+        // Mouse-to-MIDI clicks on the (invisible) keyboard make no sense when it's hidden.
+        if !self.hide_keyboard {
+            super::handle_mouse_to_midi_event(
+                &mut self.keyboard,
+                &mut self.mouse_to_midi_state,
+                ctx,
+                event,
+            );
+        }
 
         if event.window_resized() || event.scale_factor_changed() {
             self.resize(ctx)

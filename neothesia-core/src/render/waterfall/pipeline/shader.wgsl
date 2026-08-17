@@ -7,6 +7,10 @@ struct ViewUniform {
 struct TimeUniform {
     time: f32,
     speed: f32,
+    // Space (physical px) reserved below the waterfall for the virtual keyboard. 0 when the
+    // keyboard is hidden (waterfall extends to the screen bottom); ~height/5 otherwise.
+    bottom_pad: f32,
+    _pad: f32,
 }
 
 @group(0) @binding(0)
@@ -42,9 +46,9 @@ fn vs_main(vertex: Vertex, note: NoteInstance) -> VertexOutput {
 
     let size = vec2<f32>(note.size.x * view_uniform.scale, note.size.y * abs(speed));
 
-    // In an ideal world this should not be hard-coded
-    let keyboard_h = view_uniform.size.y / 5.0;
-    let keyboard_y = view_uniform.size.y - keyboard_h;
+    // The waterfall's bottom anchor: the top edge of the virtual keyboard, or the screen bottom
+    // when the keyboard is hidden (bottom_pad == 0).
+    let keyboard_y = view_uniform.size.y - time_uniform.bottom_pad;
 
     var pos = vec2<f32>(note.n_position.x * view_uniform.scale, keyboard_y);
 

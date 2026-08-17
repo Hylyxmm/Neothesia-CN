@@ -68,6 +68,13 @@ impl WaterfallRenderer {
         &mut self.notes_pipeline
     }
 
+    /// Set the physical-px pad reserved below the waterfall for the virtual keyboard (0 = extend
+    /// to the screen bottom). See [`WaterfallPipeline::set_bottom_pad`].
+    pub fn set_bottom_pad(&mut self, pad: f32) {
+        let queue = self.queue.clone();
+        self.notes_pipeline.set_bottom_pad(&queue, pad);
+    }
+
     pub fn notes(&self) -> &NoteList {
         &self.notes
     }

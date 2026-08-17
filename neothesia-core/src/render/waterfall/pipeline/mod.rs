@@ -110,6 +110,14 @@ impl WaterfallPipeline {
         self.time_uniform.update(queue);
     }
 
+    /// Set the space (physical px) reserved below the waterfall for the virtual keyboard; 0 makes
+    /// the waterfall extend to the screen bottom. The caller must also scale the fall speed by
+    /// `visible_height_ratio` (e.g. ×1.25 for 0.8H → H) to keep the visible lead time constant.
+    pub fn set_bottom_pad(&mut self, queue: &wgpu::Queue, pad: f32) {
+        self.time_uniform.data.bottom_pad = pad;
+        self.time_uniform.update(queue);
+    }
+
     pub fn update_time(&mut self, queue: &wgpu::Queue, time: f32) {
         self.time_uniform.data.time = time;
         self.time_uniform.update(queue);
@@ -121,6 +129,10 @@ impl WaterfallPipeline {
 struct TimeUniform {
     time: f32,
     speed: f32,
+    /// Physical px reserved below the waterfall for the virtual keyboard (0 when hidden). See
+    /// shader.wgsl.
+    bottom_pad: f32,
+    _pad: f32,
 }
 
 impl Default for TimeUniform {
@@ -128,6 +140,8 @@ impl Default for TimeUniform {
         Self {
             time: 0.0,
             speed: 400.0,
+            bottom_pad: 0.0,
+            _pad: 0.0,
         }
     }
 }

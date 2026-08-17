@@ -190,6 +190,12 @@ pub struct AppearanceConfigV1 {
     /// Show the scrolling grand-staff preview between the progress bar and the waterfall.
     #[serde(default = "default_staff_view")]
     pub staff_view: bool,
+
+    /// Hide the virtual keyboard at the bottom of the screen (for setups where the display sits
+    /// 1:1 above a real piano). The waterfall then extends to the screen bottom; its fall speed
+    /// is compensated (×1.25) so the visible lead time stays the same as with the keyboard.
+    #[serde(default = "default_hide_keyboard")]
+    pub hide_keyboard: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -207,6 +213,7 @@ impl Default for AppearanceConfig {
             glow: default_glow(),
             chord_identifier: false,
             staff_view: default_staff_view(),
+            hide_keyboard: default_hide_keyboard(),
         })
     }
 }
@@ -310,6 +317,10 @@ fn default_glow() -> bool {
 
 fn default_staff_view() -> bool {
     true
+}
+
+fn default_hide_keyboard() -> bool {
+    false
 }
 
 fn default_separate_channels() -> bool {

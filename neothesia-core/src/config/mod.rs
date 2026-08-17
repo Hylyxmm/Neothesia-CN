@@ -188,6 +188,14 @@ impl Config {
         self.appearance.staff_view = staff_view;
     }
 
+    pub fn hide_keyboard(&self) -> bool {
+        self.appearance.hide_keyboard
+    }
+
+    pub fn set_hide_keyboard(&mut self, hide_keyboard: bool) {
+        self.appearance.hide_keyboard = hide_keyboard;
+    }
+
     pub fn last_opened_song(&self) -> Option<&PathBuf> {
         self.history.last_opened_song.as_ref()
     }
