@@ -105,15 +105,25 @@ impl NoteLabels {
                 let buffer = &labels[(note.note % 12) as usize];
 
                 let x = layout.keys[note.note as usize - range_start].x();
-                let y =
-                    self.pos.y - (note.start.as_secs_f32() - time) * animation_speed - label_width;
+                // The label sits one label-height above the note's bottom trajectory (inside the
+                // block). For short blocks (block height < label height) that would hover ABOVE
+                // the block's top and get clipped by the screen edge while sliding in — so clamp
+                // the label to just inside the block's top instead. The 0.1s min matches the
+                // waterfall's own duration clamp so the block top is computed identically.
+                let note_bottom =
+                    self.pos.y - (note.start.as_secs_f32() - time) * animation_speed;
+                let block_top = note_bottom
+                    - note.duration.as_secs_f32().max(0.1) * animation_speed;
+                let y = (note_bottom - label_width).max(block_top + 2.0);
 
                 (buffer, x, y)
             })
             // Stop iteration once we reach top of the screen
             .take_while(|(_buffer, _x, y)| *y > 0.0)
-            // TODO: Cache last note idx to skip this NoOp skip iteration
-            .skip_while(|(_buffer, _x, y)| *y > keyboard.pos().y)
+            // Skip notes already past the waterfall's bottom anchor (the judging line). This is
+            // `self.pos.y` (the anchor the scene positions us at) rather than the keyboard's own
+            // pos, so it also follows the screen bottom when the keyboard is hidden.
+            .skip_while(|(_buffer, _x, y)| *y > self.pos.y)
             .map(|(buffer, left, top)| glyphon::TextArea {
                 buffer,
                 left,

@@ -324,6 +324,17 @@ impl super::MenuScene {
                         {
                             ctx.config.set_note_labels(!ctx.config.note_labels());
                         }
+
+                        spacer(ui);
+
+                        if nuon::settings_row_toggler()
+                            .title("隐藏键盘")
+                            .subtitle("瀑布延伸到屏幕底部(外接钢琴场景)")
+                            .value(ctx.config.hide_keyboard())
+                            .build(ui, rows)
+                        {
+                            ctx.config.set_hide_keyboard(!ctx.config.hide_keyboard());
+                        }
                     });
             });
     }
