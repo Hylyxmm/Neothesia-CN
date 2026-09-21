@@ -189,7 +189,24 @@ pub struct NuonRenderer {
     layers: Vec<NuonLayer>,
     image_map: HashMap<ImageIdentifier, Image>,
     image_renderer: ImageRenderer,
+    /// Shaped-text buffers reused across frames. Every nuon label re-shapes its text each frame
+    /// without this — with the CJK-heavy settings page that alone cost ~40ms/frame (25 fps).
+    text_cache: HashMap<TextCacheKey, glyphon::Buffer>,
 }
+
+/// Cache key covering everything `gen_buffer_with_attr` depends on.
+#[derive(Hash, PartialEq, Eq)]
+struct TextCacheKey {
+    text: String,
+    font_size_bits: u32,
+    bold: bool,
+    color: u32,
+    font_family: String,
+}
+
+/// Upper bound on cached buffers; beyond it the cache is simply reset (entries are re-created
+/// on demand). Large enough to hold every label of the busiest page plus toasts.
+const TEXT_CACHE_CAP: usize = 512;
 
 impl NuonRenderer {
     pub fn new(ctx: &Context) -> Self {
@@ -201,6 +218,7 @@ impl NuonRenderer {
                 ctx.gpu.texture_format,
                 &ctx.transform,
             ),
+            text_cache: HashMap::new(),
         }
     }
 
@@ -294,24 +312,42 @@ fn render_nuon(ui: &mut nuon::Ui, nuon_renderer: &mut NuonRenderer, ctx: &mut Co
         }
 
         for text in layer.text.iter() {
-            let buffer = if text.bold {
-                TextRenderer::gen_buffer_with_attr(
-                    text.size,
-                    &text.text,
-                    cosmic_text::Attrs::new()
-                        .family(cosmic_text::Family::Name(&text.font_family))
-                        .weight(cosmic_text::Weight::BOLD)
-                        .color(cosmic_text::Color(text.color.packet_u32())),
-                )
-            } else {
-                TextRenderer::gen_buffer_with_attr(
-                    text.size,
-                    &text.text,
-                    cosmic_text::Attrs::new()
-                        .family(cosmic_text::Family::Name(&text.font_family))
-                        .color(cosmic_text::Color(text.color.packet_u32())),
-                )
+            // Reuse the shaped buffer when the text hasn't changed — shaping CJK text from
+            // scratch every frame was the settings page's frame-time bottleneck.
+            let key = TextCacheKey {
+                text: text.text.clone(),
+                font_size_bits: text.size.to_bits(),
+                bold: text.bold,
+                color: text.color.packet_u32(),
+                font_family: text.font_family.to_string(),
             };
+            if nuon_renderer.text_cache.len() >= TEXT_CACHE_CAP && !nuon_renderer.text_cache.contains_key(&key) {
+                nuon_renderer.text_cache.clear();
+            }
+            let buffer = nuon_renderer
+                .text_cache
+                .entry(key)
+                .or_insert_with(|| {
+                    if text.bold {
+                        TextRenderer::gen_buffer_with_attr(
+                            text.size,
+                            &text.text,
+                            cosmic_text::Attrs::new()
+                                .family(cosmic_text::Family::Name(&text.font_family))
+                                .weight(cosmic_text::Weight::BOLD)
+                                .color(cosmic_text::Color(text.color.packet_u32())),
+                        )
+                    } else {
+                        TextRenderer::gen_buffer_with_attr(
+                            text.size,
+                            &text.text,
+                            cosmic_text::Attrs::new()
+                                .family(cosmic_text::Family::Name(&text.font_family))
+                                .color(cosmic_text::Color(text.color.packet_u32())),
+                        )
+                    }
+                })
+                .clone();
 
             match text.text_justify {
                 nuon::TextJustify::Left => {
