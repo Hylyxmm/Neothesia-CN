@@ -65,10 +65,10 @@ jobs:
       - id: Build
         uses: ./.github/actions/windows
       - name: Package (exe + soundfont)
-        shell: bash
+        shell: pwsh
         run: |
-          mv target/release/neothesia.exe .
-          zip neothesia-windows.zip neothesia.exe assets/soundfont/default.sf2
+          Move-Item target/release/neothesia.exe .
+          Compress-Archive -Path neothesia.exe, assets/soundfont/default.sf2 -DestinationPath neothesia-windows.zip
       - name: Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
