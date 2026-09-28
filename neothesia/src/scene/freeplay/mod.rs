@@ -13,7 +13,7 @@ use crate::{
     scene::{
         MouseToMidiEventState, NuonRenderer, Scene,
         freeplay::recorder::{FreeplayRecorder, Preview, RecorderStatus},
-        playing_scene::Keyboard,
+        playing_scene::{Keyboard, key_light_strip::{KeyLightStrip, STRIP_TOTAL_H}},
     },
     song::Song,
     utils::{BoxFuture, noop_waker_ref, window::WinitEvent},
@@ -44,6 +44,9 @@ pub struct FreeplayScene {
     quad_renderer_bg: QuadRenderer,
     quad_renderer_fg: QuadRenderer,
     glow: Option<GlowRenderer>,
+
+    hide_keyboard: bool,
+    key_light_strip: KeyLightStrip,
 
     // TODO: This does not make sens, but get's us going without refactoring
     song: Option<Song>,
@@ -94,6 +97,8 @@ impl FreeplayScene {
             quad_renderer_bg,
             quad_renderer_fg,
             glow,
+            hide_keyboard: ctx.config.hide_keyboard(),
+            key_light_strip: KeyLightStrip::new(&ctx.gpu, &ctx.transform),
             song,
             nuon_renderer: NuonRenderer::new(ctx),
             nuon: nuon::Ui::new(),
@@ -105,6 +110,16 @@ impl FreeplayScene {
 
             context: std::task::Context::from_waker(noop_waker_ref()),
             futures: Vec::new(),
+        }
+    }
+
+    /// The y (logical px) everything bottom-anchored uses: the keyboard's top edge, or just above
+    /// the key-light strip when the keyboard is hidden (same semantics as the playing scene).
+    fn bottom_y(&self, ctx: &Context) -> f32 {
+        if self.hide_keyboard {
+            ctx.window_state.logical_size.height - STRIP_TOTAL_H
+        } else {
+            self.keyboard.pos().y
         }
     }
 
@@ -141,10 +156,11 @@ impl FreeplayScene {
     fn update_ui(&mut self, ctx: &mut Context) {
         recorder::update_preview_ui(self, ctx);
 
+        let label_y = self.bottom_y(ctx) - 25.0 - 10.0;
         nuon::label()
             .text(&self.deduced_chord_name)
             .font_size(25.0)
-            .y(self.keyboard.pos().y - 25.0 - 10.0)
+            .y(label_y)
             .height(25.0)
             .width(ctx.window_state.logical_size.width)
             .build(&mut self.nuon);
@@ -153,7 +169,7 @@ impl FreeplayScene {
     fn resize(&mut self, ctx: &mut Context) {
         self.keyboard.resize(ctx);
         self.guidelines.set_layout(self.keyboard.layout().clone());
-        self.guidelines.set_pos(*self.keyboard.pos());
+        self.guidelines.set_pos((0.0, self.bottom_y(ctx)).into());
         if let Some(preview) = self.preview.as_mut() {
             preview.resize(&self.keyboard, ctx);
         }
@@ -181,6 +197,12 @@ impl Scene for FreeplayScene {
         self.quad_renderer_bg.clear();
         self.quad_renderer_fg.clear();
 
+        let hide_keyboard = ctx.config.hide_keyboard();
+        if hide_keyboard != self.hide_keyboard {
+            self.hide_keyboard = hide_keyboard;
+            self.guidelines.set_pos((0.0, self.bottom_y(ctx)).into());
+        }
+
         self.dispatch_futures(ctx);
 
         if let Some(preview) = self.preview.as_mut() {
@@ -196,10 +218,22 @@ impl Scene for FreeplayScene {
             time,
             ctx.window_state.logical_size,
         );
-        self.keyboard
-            .update(&mut self.quad_renderer_fg, &mut self.text_renderer);
-
-        self.update_glow(delta);
+        if !self.hide_keyboard {
+            self.keyboard
+                .update(&mut self.quad_renderer_fg, &mut self.text_renderer);
+            self.update_glow(delta);
+        } else {
+            // Bottom indicator strip: mirrors the (hidden) key layout and lights up on input.
+            self.key_light_strip.update(
+                delta,
+                self.keyboard.key_states(),
+                self.keyboard.layout(),
+            );
+            self.key_light_strip.prepare(
+                ctx.window_state.logical_size.height,
+                self.keyboard.layout(),
+            );
+        }
 
         self.quad_renderer_bg.prepare();
         self.quad_renderer_fg.prepare();
@@ -224,6 +258,9 @@ impl Scene for FreeplayScene {
             preview.render(rpass);
         }
         self.quad_renderer_fg.render(rpass);
+        if self.hide_keyboard {
+            self.key_light_strip.render(rpass);
+        }
         if let Some(glow) = &self.glow {
             glow.render(rpass);
         }

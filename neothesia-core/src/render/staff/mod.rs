@@ -218,6 +218,16 @@ fn classify(beats: f32) -> (char, bool, u8) {
     }
 }
 
+/// The end of the beat containing `t` (seconds), where `ms` is the enclosing measure's start and
+/// `quarter` the beat length. A tiny epsilon is added BEFORE flooring so a note whose
+/// `(t-ms)/quarter` is mathematically an integer (a note right on a beat boundary) isn't pushed
+/// to the previous beat by float error — e.g. `(t-ms)/quarter == 2.9999999` flooring to 2. That
+/// mis-placed boundary used to hard-cut beams and split a beat of 4 sixteenths into 1 + 3.
+fn beat_end_of(t: f32, quarter: f32, ms: f32) -> f32 {
+    let beat_idx = ((t - ms) / quarter + quarter * 0.01).floor();
+    ms + (beat_idx + 1.0) * quarter
+}
+
 /// Diatonic letter (0=C .. 6=B) of a MIDI note (sharps share the natural's letter).
 fn note_letter(midi: u8) -> i32 {
     const DEGREE: [i32; 12] = [0, 0, 1, 1, 2, 3, 3, 4, 4, 5, 5, 6];
@@ -735,12 +745,7 @@ impl StaffRenderer {
         if i + 1 >= n {
             return None;
         }
-        // Compute the end of the beat containing columns[i].t. A tiny epsilon is added BEFORE
-        // flooring so that a note whose (t-ms)/quarter is mathematically an integer (a note right
-        // on a beat boundary) isn't pushed to the previous beat by float error — that mis-placed
-        // boundary then hard-cut the beam and split a beat of 4 sixteenths into 1 + 3.
-        let beat_idx = ((columns[i].t - ms) / quarter + quarter * 0.01).floor();
-        let beat_end = ms + (beat_idx + 1.0) * quarter;
+        let beat_end = beat_end_of(columns[i].t, quarter, ms);
         let eps = quarter * 0.02; // absorb float error at the exact beat boundary
         if columns[i + 1].t >= beat_end - eps {
             return None;
@@ -1419,5 +1424,44 @@ impl StaffRenderer {
     pub fn render<'rpass>(&'rpass mut self, rpass: &mut wgpu_jumpstart::RenderPass<'rpass>) {
         self.quads.render(rpass);
         self.text.render(rpass);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::beat_end_of;
+
+    /// Regression test for the "4 sixteenths split into 1 + 3" bug: a note whose position lands
+    /// exactly on a beat boundary — with (t-ms)/quarter arriving as 2.9999999 in f32 — must be
+    /// attributed to the beat that STARTS there, not the previous one.
+    #[test]
+    fn beat_end_of_exact_beat_boundary() {
+        // Values in the shape seen on real files (K310): a tempo-derived quarter of ~0.4762s and
+        // a note at ms + 3*quarter, i.e. the start of the measure's 4th beat.
+        let ms = 1.904_762;
+        let quarter = 0.476_190_5;
+        let t = ms + 3.0 * quarter;
+
+        let end = beat_end_of(t, quarter, ms);
+        let expected = ms + 4.0 * quarter;
+
+        assert!(
+            (end - expected).abs() < quarter * 0.01,
+            "beat boundary note attributed to the wrong beat: end={end}, expected={expected}"
+        );
+    }
+
+    /// A note in the middle of a beat keeps that beat's end as usual.
+    #[test]
+    fn beat_end_of_mid_beat() {
+        let end = beat_end_of(0.7, 0.5, 0.0);
+        assert_eq!(end, 1.0);
+    }
+
+    /// A note exactly on a downbeat (measure start) belongs to the measure's first beat.
+    #[test]
+    fn beat_end_of_measure_start() {
+        let end = beat_end_of(0.0, 0.5, 0.0);
+        assert_eq!(end, 0.5);
     }
 }

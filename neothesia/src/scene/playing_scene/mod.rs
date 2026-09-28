@@ -19,7 +19,7 @@ use crate::{
 mod keyboard;
 pub use keyboard::Keyboard;
 
-mod key_light_strip;
+pub mod key_light_strip;
 use key_light_strip::KeyLightStrip;
 
 pub(crate) mod midi_player;

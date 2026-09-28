@@ -62,8 +62,6 @@ pub struct InkRect {
     pub x: f32,
     /// Ink top edge, relative to the buffer's top.
     pub y: f32,
-    /// Ink width.
-    pub w: f32,
     /// Ink height.
     pub h: f32,
 }
@@ -130,7 +128,6 @@ impl GlyphCache {
                         .map(|img| InkRect {
                             x: pen_x + img.placement.left as f32,
                             y: line_y + pen_y - img.placement.top as f32,
-                            w: img.placement.width as f32,
                             h: img.placement.height as f32,
                         })
                         .unwrap_or_default()
@@ -187,8 +184,8 @@ mod tests {
         for (c, name) in cases {
             let (_, _advance_w, _line_h, ink) = cache.get_ref(c);
             eprintln!(
-                "{name} U+{:04X}: ink x={:>7.2} y={:>7.2} w={:>6.2} h={:>6.2} | top={:>7.2} bottom={:>7.2}",
-                c as u32, ink.x, ink.y, ink.w, ink.h, ink.y, ink.y + ink.h,
+                "{name} U+{:04X}: ink x={:>7.2} y={:>7.2} h={:>6.2} | top={:>7.2} bottom={:>7.2}",
+                c as u32, ink.x, ink.y, ink.h, ink.y, ink.y + ink.h,
             );
         }
         // The down-flag's ink must straddle the TextArea origin (top < 0 < bottom), i.e. its
