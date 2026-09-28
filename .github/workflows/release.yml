@@ -5,6 +5,11 @@ on:
     tags:
       - "v*"
 
+# New repositories default the workflow token to read-only, which made the release
+# create/upload steps fail with "release not found" / 403.
+permissions:
+  contents: write
+
 jobs:
   # `gh release upload` fails when the release doesn't exist yet, so make sure it does before
   # any build job uploads to it. Re-running an existing release is fine (the create no-ops).
