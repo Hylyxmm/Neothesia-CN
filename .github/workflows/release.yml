@@ -6,7 +6,19 @@ on:
       - "v*"
 
 jobs:
+  # `gh release upload` fails when the release doesn't exist yet, so make sure it does before
+  # any build job uploads to it. Re-running an existing release is fine (the create no-ops).
+  create_release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Create release if missing
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create ${{github.ref_name}} --title "Neothesia ${{github.ref_name}}" --generate-notes -R ${{github.repository}} || true
+
   build_ubuntu:
+    needs: create_release
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -22,6 +34,7 @@ jobs:
         run: gh release upload ${{github.ref_name}} neothesia-ubuntu.zip
 
   build_ubuntu_recorder:
+    needs: create_release
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -38,6 +51,7 @@ jobs:
         run: gh release upload ${{github.ref_name}} neothesia-cli-ubuntu.zip
 
   build_windows:
+    needs: create_release
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v6
@@ -53,6 +67,7 @@ jobs:
         run: gh release upload ${{github.ref_name}} neothesia.exe
 
   build_windows_recorder:
+    needs: create_release
     runs-on: windows-latest
 
     env:
@@ -72,6 +87,7 @@ jobs:
         run: gh release upload ${{github.ref_name}} neothesia-cli.exe
 
   build_macos:
+    needs: create_release
     runs-on: macos-latest
 
     env:
