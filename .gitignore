@@ -4,3 +4,5 @@
 /out
 .DS_Store
 node_modules
+# Prebuilt binaries are distributed via GitHub Releases, not tracked in git
+/dist
